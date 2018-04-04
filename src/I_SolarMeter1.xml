@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<implementation>
+<functions>
+	</functions>
+	<files>L_SolarMeter1.lua</files>
+	<startup>SolarMeter_Init</startup>
+</implementation>

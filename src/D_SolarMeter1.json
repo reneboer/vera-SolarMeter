@@ -1,0 +1,442 @@
+{
+	"default_icon": "SolarMeter1.png",
+	"inScene": "0",
+	"Tabs": [
+		{
+			"Label": {
+				"lang_tag": "tabname_control",
+				"text": "Control" 
+		},
+		"Position": "0",
+		"TabType": "flash",
+		"TopNavigationTab": 1,
+		"SceneGroup": [
+			{
+				"id": "1",
+				"top": "1",
+				"left": "0",
+				"x": "2",
+				"y": "3"
+			}
+		],
+		"ControlGroup": [
+			{
+				"id": "1",
+				"type": "info",
+				"scenegroup": "1"
+			},
+               {
+				"id": "2",
+				"type": "info",
+				"scenegroup": "1"
+			},
+               {
+				"id": "3",
+				"type": "info",
+				"scenegroup": "1"
+			}
+		],
+		"Control": [
+			{
+				"ControlPair":"1",
+				"ControlType":"label",
+				"top": 0,
+				"left": 0,
+				"text_align": "left",
+				"Label": {
+					"lang_tag": "power",
+					"text": "Power:" 
+				},
+				"Display": {
+					"Top": 60,
+					"Left": 50,
+					"Width": 85,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"1",
+				"ControlType":"variable",
+				"top": 0,
+				"left": 0.5,
+				"text_align": "right",
+				"Display": {
+					"Service": "urn:micasaverde-com:serviceId:EnergyMetering1",
+					"Variable": "Watts",
+					"Top": 60,
+					"Left": 150,
+					"Width": 55,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"1",
+				"ControlType":"label",
+				"top": 0,
+				"left": 1.5,
+				"text_align": "left",
+				"Label": {
+					"lang_tag": "watts",
+					"text": "W" 
+				},
+				"Display": {
+					"Top": 60,
+					"Left": 240,
+					"Width": 25,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlGroup":"2", 
+				"ControlPair":"2",
+				"ControlType":"label",
+				"top": 0,
+				"left": 0,
+				"text_align": "left",
+				"Label": {
+					"lang_tag": "todayp",
+					"text": "Today:" 
+				},
+				"Display": {
+					"Top": 90,
+					"Left": 50,
+					"Width": 85,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlGroup":"2", 
+				"ControlPair":"2",
+				"ControlType":"variable",
+				"top": 0,
+				"left": 0.5,
+				"text_align": "right",
+				"Display": {
+					"Service": "urn:micasaverde-com:serviceId:EnergyMetering1",
+					"Variable": "DayKWH",
+					"Top": 90,
+					"Left": 150,
+					"Width": 55,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlGroup":"2", 
+				"ControlPair":"2",
+				"ControlType":"label",
+				"top": 0,
+				"left": 1.5,
+				"text_align": "left",
+				"Label": {
+					"lang_tag": "today",
+					"text": "KWh"
+				},
+				"Display": {
+					"Top": 90,
+					"Left": 240,
+					"Width": 25,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"3",
+				"ControlType":"label",
+				"top": 1,
+				"left": 0,
+				"text_align" : "left",
+				"Label": {
+					"lang_tag": "energy_week",
+					"text": "This Week:" 
+				},
+				"Display": {
+					"Top": 120,
+					"Left": 50,
+					"Width": 85,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"3",
+				"ControlType":"variable",
+				"top": 1,
+				"left": 0.5,
+				"text_align": "right",
+				"Display": {
+					"Service": "urn:micasaverde-com:serviceId:EnergyMetering1",
+					"Variable": "WeekKWH",
+					"Top": 120,
+					"Left": 150,
+					"Width": 55,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"3",
+				"ControlType":"label",
+				"top": 1,
+				"left": 1.5,
+				"text_align": "left",
+				"Label": {
+					"lang_tag": "enery_week_unit",
+					"text": "KWh"
+				},
+				"Display": {
+					"Top": 120,
+					"Left": 240,
+					"Width": 25,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"4",
+				"ControlType":"label",
+				"top": 1,
+				"left": 0,
+				"text_align" : "left",
+				"Label": {
+					"lang_tag": "energy_month",
+					"text": "This Month:" 
+				},
+				"Display": {
+					"Top": 150,
+					"Left": 50,
+					"Width": 85,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"4",
+				"ControlType":"variable",
+				"top": 1,
+				"left": 0.5,
+				"text_align": "right",
+				"Display": {
+					"Service": "urn:micasaverde-com:serviceId:EnergyMetering1",
+					"Variable": "MonthKWH",
+					"Top": 150,
+					"Left": 150,
+					"Width": 55,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"4",
+				"ControlType":"label",
+				"top": 1,
+				"left": 1.5,
+				"text_align": "left",
+				"Label": {
+					"lang_tag": "enery_month_unit",
+					"text": "KWh"
+				},
+				"Display": {
+					"Top": 150,
+					"Left": 240,
+					"Width": 25,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"5",
+				"ControlType":"label",
+				"top": 1,
+				"left": 0,
+				"text_align" : "left",
+				"Label": {
+					"lang_tag": "energy_year",
+					"text": "This Year:" 
+				},
+				"Display": {
+					"Top": 180,
+					"Left": 50,
+					"Width": 85,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"5",
+				"ControlType":"variable",
+				"top": 1,
+				"left": 0.5,
+				"text_align": "right",
+				"Display": {
+					"Service": "urn:micasaverde-com:serviceId:EnergyMetering1",
+					"Variable": "YearKWH",
+					"Top": 180,
+					"Left": 150,
+					"Width": 55,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"5",
+				"ControlType":"label",
+				"top": 1,
+				"left": 1.5,
+				"text_align": "left",
+				"Label": {
+					"lang_tag": "enery_year_unit",
+					"text": "KWh"
+				},
+				"Display": {
+					"Top": 180,
+					"Left": 240,
+					"Width": 25,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"6",
+				"ControlType":"label",
+				"text_align":"left",
+				"Label": {
+					"lang_tag": "energy_system",
+					"text": "Lifetime Energy :" 
+				},
+				"Display": {
+					"Top": 210,
+					"Left": 50,
+					"Width": 85,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"6",
+				"ControlType":"variable",
+				"top": 0,
+				"left": 0.5,
+				"text_align":"right",
+				"Display": {
+					"Service": "urn:micasaverde-com:serviceId:EnergyMetering1",
+					"Variable": "LifeKWH",
+					"Top": 210,
+					"Left": 150,
+					"Width": 55,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlPair":"6",
+				"ControlType":"label",
+				"top": 0,
+				"left": 1.5,
+				"text_align":"left",
+				"Label": {
+					"lang_tag": "enery_system_unit",
+					"text": "KWh"
+				},
+				"Display": {
+					"Top": 210,
+					"Left": 240,
+					"Width": 25,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlGroup": "3",
+				"ControlType": "spacer",
+				"HorizontalMultiplier": "0.7"
+			},
+			{
+				"ControlGroup":"3",
+				"ControlPair":"6",
+				"ControlType":"label",
+				"text_align":"left",
+				"Label": { "text": "Last Update :" 
+				},
+				"Display": {
+					"Top": 240,
+					"Left": 50,
+					"Width": 85,
+					"Height": 20 
+				} 
+			},
+			{
+				"ControlGroup":"3",
+				"ControlPair":"6",
+				"ControlType":"variable",
+				"top": 0,
+				"left": 0.5,
+				"text_align":"right",
+				"Display": {
+					"Service": "urn:rboer-com:serviceId:SolarMeter1",
+					"Variable": "LastUpdate",
+					"Top": 240,
+					"Left": 150,
+					"Width": 55,
+					"Height": 20 
+				} 
+			}
+		] 
+	},
+	{ 
+		"Label": { "lang_tag": "settings", "text": "Settings" }, 
+		"TopNavigationTab": 1, 
+		"Position": "1", 
+		"TabType": "javascript", 
+		"ScriptName": "J_SolarMeter1.js", 
+		"Function": "SolarMeter.Settings" 
+	},	{
+		"Label": {
+			"lang_tag": "advanced",
+			"text": "Advanced" 
+		},
+		"Position": "1",
+		"TabType": "javascript",
+		"ScriptName": "shared.js",
+		"Function": "advanced_device" 
+	},
+	{
+		"Label": {
+			"lang_tag": "logs",
+			"text": "Logs" 
+		},
+		"Position": "2",
+		"TabType": "javascript",
+		"ScriptName": "shared.js",
+		"Function": "device_logs" 
+	},
+	{
+		"Label": {
+			"lang_tag": "notifications",
+			"text": "Notifications" 
+		},
+		"Position": "3",
+		"TabType": "javascript",
+		"ScriptName": "shared.js",
+		"Function": "device_notifications" 
+	} 
+	],
+	"eventList": {
+		"event_1": {
+			"label": "Energy production goes above",
+			"serviceId": "urn:micasaverde-com:serviceId:EnergyMetering1",
+			"norepeat": "1",
+			"argumentList" : {
+				"argument_1" : {
+					"dataType": "i4",
+					"name": "Watts",
+					"comparisson": ">",
+					"prefix": "Watts: ",
+					"suffix": ""
+				}
+			}
+		},
+		"event_2": {
+			"label": "Energy production goes below",
+			"serviceId": "urn:micasaverde-com:serviceId:EnergyMetering1",
+			"norepeat": "1",
+			"argumentList" : {
+				"argument_1" : {
+					"dataType": "i4",
+					"name": "Watts",
+					"comparisson": "<",
+					"prefix": "Watts: ",
+					"suffix": ""
+				}
+			}
+		}
+	} ,
+	"DeviceType": "urn:schemas-rboer-com:device:SolarMeter:1", 
+	"device_type": "urn:schemas-rboer-com:device:SolarMeter:1" 
+}

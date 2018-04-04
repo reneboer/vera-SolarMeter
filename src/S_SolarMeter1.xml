@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<scpd xmlns="urn:schemas-upnp-org:service-1-0">
+	<specVersion>
+		<major>1</major>
+		<minor>0</minor>
+	</specVersion>
+	<serviceStateTable>
+		<stateVariable sendEvents="no">
+			<name>AppMemoryUsed</name>
+			<dataType>ui4</dataType>
+		</stateVariable>
+		<stateVariable sendEvents="no">
+			<name>Version</name>
+			<dataType>string</dataType>
+		</stateVariable>
+		<stateVariable sendEvents="no">
+			<name>LogLevel</name>
+			<dataType>ui4</dataType>
+		</stateVariable>
+		<stateVariable sendEvents="no">
+			<name>DayInterval</name>
+			<dataType>ui4</dataType>
+		</stateVariable>
+		<stateVariable sendEvents="no">
+			<name>NightInterval</name>
+			<dataType>ui4</dataType>
+		</stateVariable>
+	</serviceStateTable>
+	<actionList>
+	</actionList>
+</scpd>
