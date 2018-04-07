@@ -1,8 +1,12 @@
 --[==[
 	Module L_SolarMeter1.lua
 	Written by R.Boer. 
-	V1.0 4 April 2018
+	V1.1 7 April 2018
 
+	V1.1 Changes:
+		- Fronius JSON API V1 support
+		- Some big fixes
+	
  	V1.0 First release
 
 	Get data from several Solar systems
@@ -12,7 +16,7 @@ local socketLib = require("socket")  -- Required for logAPI module.
 local json = require("dkjson")
 
 local PlugIn = {
-	Version = "1.0",
+	Version = "1.1",
 	DESCRIPTION = "Solar Meter", 
 	SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
 	EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
@@ -344,8 +348,8 @@ function SS_EnphaseLocal_Refresh()
 		WeekKWH = retData.wattHoursSevenDays/1000
 		LifeKWH = retData.wattHoursLifetime/1000
 		retData = nil 
-		-- Only update time stamp if watts are updated.
-		if watts == var.GetNumber("Watts", PlugIn.EM_SID) then
+		-- Only update time stamp if watts or DayKWH are changed.
+		if watts == var.GetNumber("Watts", PlugIn.EM_SID) and DayKWH == var.GetNumber("DayKWH", PlugIn.EM_SID) then
 			ts = vat.GetNumber("LastRefresh", PlugIn.EM_SID)
 		end
 		return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
@@ -394,6 +398,59 @@ function SS_EnphaseRemote_Refresh()
 		ts = retData.last_interval_end_at
 		retData = nil 
 		return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
+	else
+		return "HTTP Get to "..URL.." failed. Error :"..HttpCode
+	end	
+end
+
+-- For Fronius Solar API V1
+-- Not tested.
+-- See http://www.fronius.com/en/photovoltaics/products/commercial/system-monitoring/open-interfaces/fronius-solar-api-json-
+function SS_FroniusAPI_Init()
+	local ipa = var.Get("FA_IPAddress")
+	local dev = var.Get("FA_DeviceID")
+	local ipAddress = string.match(ipa, '^(%d%d?%d?%.%d%d?%d?%.%d%d?%d?%.%d%d?%d?)')
+	if (ipAddress == nil or dev = "") then 
+		log.Log("Fronius API, missing IP address.",3)
+		return false
+	end
+	return true
+end
+
+function SS_FroniusAPI_Refresh()
+	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = 0,0,0,0,0,0,0
+	local ipa = var.Get("FA_IPAddress")
+	local dev = var.Get("FA_DeviceID")
+
+	local URL = "http://%s/solar_api/v1/GetInverterRealtimeData.cgi?Scope=Device&DeviceId=%s&DataCollection=CommonInverterData"
+	URL = URL:format(ipa,dev)
+	log.Debug("Florius URL " .. URL)
+	ts = os.time()
+	local retCode, dataRaw, HttpCode = luup.inet.wget(URL,15)
+	if (retCode == 0 and HttpCode == 200) then
+		log.Debug("Retrieve HTTP Get Complete...")
+		log.Debug(dataRaw)
+
+		-- Get standard values
+		local retData = json.decode(dataRaw)
+		
+		-- Get standard values
+		retData = retData.Data
+		if retData then
+			watts = tonumber(retData.PAC.Value)
+			DayKWH = retData.DAY_ENERGY.Value / 1000
+			YearKWH = retData.YEAR_ENERGY.Value / 1000
+			LifeKWH = retData.TOTAL_ENERGY.Value / 1000
+			var.Set("Fronius_Status", retData.DeviceStatus.StatusCode)
+			-- Only update time stamp if watts or DayKWH are changed.
+			if watts == var.GetNumber("Watts", PlugIn.EM_SID) and DayKWH == var.GetNumber("DayKWH", PlugIn.EM_SID) then
+				ts = vat.GetNumber("LastRefresh", PlugIn.EM_SID)
+			end
+			retData = nil 
+			return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
+		else
+			return "No data received."
+		end
 	else
 		return "HTTP Get to "..URL.." failed. Error :"..HttpCode
 	end	
@@ -563,7 +620,7 @@ function SolarMeter_Init(lul_device)
 	if ((isDisabled == 1) or (isDisabled == "1")) then
 		log.Log("Init: Plug-in version "..PlugIn.Version.." - DISABLED",2)
 		PlugIn.Disabled = true
-		var.Set("DisplayLine1", "Disabled. ", PlugIn.ALTUI_SID)
+		var.Set("DisplayLine2", "Disabled. ", PlugIn.ALTUI_SID)
 		utils.SetLuupFailure(0, PlugIn.THIS_DEVICE)
 		return true
 	end
@@ -574,7 +631,6 @@ function SolarMeter_Init(lul_device)
 	
 	-- Make sure icons are accessible when they should be. 
 	utils.CheckImages(PluginImages)
-	PlugIn.ShowMultiTariff = tonumber(var.Default("ShowMultiTariff",0)) -- When 1 show T1 and T2 separately
 
 	-- set up logging to syslog	
 	log.SetSyslog(var.Default("Syslog")) -- send to syslog if IP address and Port 'XXX.XX.XX.XXX:YYY' (default port 514)
@@ -659,8 +715,8 @@ function SolarMeter_Refresh()
 			var.Set("LifeKWH", LifeKWH, PlugIn.EM_SID)
 			var.Set("LastRefresh", ts,  PlugIn.EM_SID)
 			var.Set("LastUpdate", os.date("%H:%M %d %b", ts))
-			local fmt ="Today: %.3f  Last Update: %s"
-			var.Set("DisplayLine1", fmt:format(DayKWH ,os.date("%H:%M %d %b", ts)), PlugIn.ASID)
+			local fmt ="Day: %.3f  Last Upd: %s"
+			var.Set("DisplayLine2", fmt:format(DayKWH ,os.date("%H:%M", ts)), PlugIn.ALTUI_SID)
 		else
 			log.Log("Refresh failed "..(res or "unknown"),2)
 		end

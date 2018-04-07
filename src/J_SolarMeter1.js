@@ -1,7 +1,10 @@
 //# sourceURL=J_SolarMeter.js
 // SmartMeter control UI for UI7 and ALTUI
 // Written by R.Boer. 
-// V1.0 4 April 2018
+// V1.1 4 April 2018
+//
+// V1.1 Changes:
+//		Fronius JSON API V1 support
 //
 // V1.0 Changes:
 //		Initial release
@@ -42,9 +45,10 @@ var SolarMeter = (function (api) {
 			var numSystems = 3;
 			var dayInterval = [{'value':'10','label':'10 Seconds'},{'value':'30','label':'30 Seconds'},{'value':'60','label':'1 Minute'},{'value':'120','label':'2 Minutes'},{'value':'300','label':'5 Minutes'},{'value':'600','label':'10 Minutes'},{'value':'900','label':'15 Minutes'}];
 			var nightInterval = [{'value':'300','label':'5 Minutes'},{'value':'600','label':'10 Minutes'},{'value':'900','label':'15 Minutes'},{'value':'1800','label':'30 Minutes'},{'value':'3600','label':'1 Hour'}];
-			var solarSystem = [{'value':'0','label':'Please select...'},{'value':'1','label':'Enphase Envoy API'},{'value':'2','label':'Enphase Remote API'},{'value':'4','label':'PV Output'},{'value':'3','label':'Solar Edge'},{'value':'5','label':'SUNGROW Power'}];
+			var solarSystem = [{'value':'0','label':'Please select...'},{'value':'1','label':'Enphase Envoy API'},{'value':'2','label':'Enphase Remote API'},{'value':'6','label':'Fronius API V1'},{'value':'4','label':'PV Output'},{'value':'3','label':'Solar Edge'},{'value':'5','label':'SUNGROW Power'}];
 			var yesNo = [{'value':'0','label':'No'},{'value':'1','label':'Yes'}];
 			var logLevel = [{'value':'1','label':'Error'},{'value':'2','label':'Warning'},{'value':'8','label':'Info'},{'value':'11','label':'Debug'}];
+			var fronDev = [{'value':'0','label':'0'},{'value':'1','label':'1'},{'value':'2','label':'2'},{'value':'3','label':'3'},{'value':'4','label':'4'},{'value':'5','label':'5'},{'value':'6','label':'6'},{'value':'7','label':'7'},{'value':'8','label':'8'},{'value':'9','label':'9'}];
 			var html = '<div class="deviceCpanelSettingsPage">'+
 				'<h3>Device #'+deviceID+'&nbsp;&nbsp;&nbsp;'+api.getDisplayedDeviceName(deviceID)+'</h3>';
 			if (deviceObj.disabled == 1) {
@@ -74,6 +78,10 @@ var SolarMeter = (function (api) {
 				htmlAddInput(deviceID, 'SUNGROW User ID', 50, 'SG_UserID')+
 				htmlAddPwdInput(deviceID, 'SUNGROW Password', 50, 'SG_Password')+
 				'</div>'+
+				'<div id="'+DIV_PREFIX+deviceID+'div_system6" style="display: '+((curSystem === '6')?'block':'none')+';" >'+
+				htmlAddInput(deviceID, 'Fronius IP Address', 50, 'FA_IPAddress')+
+				htmlAddPulldown(deviceID, 'Fronius Device ID', 'FA_DeviceID', fronDev)+
+				'</div>'+
 				htmlAddPulldown(deviceID, 'Log level', 'LogLevel', logLevel)+
 				htmlAddInput(deviceID, 'Syslog server IP Address:Port', 30, 'Syslog') + 
 				htmlAddButton(deviceID, 'UpdateSettings')+
@@ -85,11 +93,13 @@ var SolarMeter = (function (api) {
 				'   $("#'+DIV_PREFIX+deviceID+'div_system3").fadeOut(); '+
 				'   $("#'+DIV_PREFIX+deviceID+'div_system4").fadeOut(); '+
 				'   $("#'+DIV_PREFIX+deviceID+'div_system5").fadeOut(); '+
+				'   $("#'+DIV_PREFIX+deviceID+'div_system6").fadeOut(); '+
 				'   if ($(this).val() == 1) { $("#'+DIV_PREFIX+deviceID+'div_system1").fadeIn(); }; '+
 				'   if ($(this).val() == 2) { $("#'+DIV_PREFIX+deviceID+'div_system2").fadeIn(); }; '+
 				'   if ($(this).val() == 3) { $("#'+DIV_PREFIX+deviceID+'div_system3").fadeIn(); }; '+
 				'   if ($(this).val() == 4) { $("#'+DIV_PREFIX+deviceID+'div_system4").fadeIn(); }; '+
 				'   if ($(this).val() == 5) { $("#'+DIV_PREFIX+deviceID+'div_system5").fadeIn(); }; '+
+				'   if ($(this).val() == 6) { $("#'+DIV_PREFIX+deviceID+'div_system6").fadeIn(); }; '+
 				' } );'+
 				'</script>';
 			}
@@ -134,6 +144,8 @@ var SolarMeter = (function (api) {
 		varSet(deviceID,'SE_SystemID',htmlGetElemVal(deviceID, 'SE_SystemID'));
 		varSet(deviceID,'SG_UserID',htmlGetElemVal(deviceID, 'SG_UserID'));
 		varSet(deviceID,'SG_Password',htmlGetElemVal(deviceID, 'SG_Password'));
+		varSet(deviceID,'FA_IPAddress',htmlGetElemVal(deviceID, 'FA_IPAddress'));
+		varSet(deviceID,'FA_DeviceID',htmlGetElemVal(deviceID, 'FA_DeviceID'));
 		varSet(deviceID,'LogLevel',htmlGetPulldownSelection(deviceID, 'LogLevel'));
 		varSet(deviceID,'Syslog',htmlGetElemVal(deviceID, 'Syslog'));
 		application.sendCommandSaveUserData(true);
