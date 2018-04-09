@@ -410,7 +410,7 @@ function SS_FroniusAPI_Init()
 	local ipa = var.Get("FA_IPAddress")
 	local dev = var.Get("FA_DeviceID")
 	local ipAddress = string.match(ipa, '^(%d%d?%d?%.%d%d?%d?%.%d%d?%d?%.%d%d?%d?)')
-	if (ipAddress == nil or dev = "") then 
+	if (ipAddress == nil or dev == "") then 
 		log.Log("Fronius API, missing IP address.",3)
 		return false
 	end
