@@ -1,8 +1,10 @@
 --[==[
 	Module L_SolarMeter1.lua
 	Written by R.Boer. 
-	V1.1 7 April 2018
+	V1.2 10 April 2018
 
+	V1.2 Changes:
+		- Corrected Dispay on latest version of ALTUI
 	V1.1 Changes:
 		- Fronius JSON API V1 support
 		- Some big fixes
@@ -16,7 +18,7 @@ local socketLib = require("socket")  -- Required for logAPI module.
 local json = require("dkjson")
 
 local PlugIn = {
-	Version = "1.1",
+	Version = "1.2",
 	DESCRIPTION = "Solar Meter", 
 	SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
 	EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
@@ -411,7 +413,7 @@ function SS_FroniusAPI_Init()
 	local dev = var.Get("FA_DeviceID")
 	local ipAddress = string.match(ipa, '^(%d%d?%d?%.%d%d?%d?%.%d%d?%d?%.%d%d?%d?)')
 	if (ipAddress == nil or dev == "") then 
-		log.Log("Fronius API, missing IP address.",3)
+		log.Log("Fronius API, missing configuration details.",3)
 		return false
 	end
 	return true
@@ -715,8 +717,10 @@ function SolarMeter_Refresh()
 			var.Set("LifeKWH", LifeKWH, PlugIn.EM_SID)
 			var.Set("LastRefresh", ts,  PlugIn.EM_SID)
 			var.Set("LastUpdate", os.date("%H:%M %d %b", ts))
-			local fmt ="Day: %.3f  Last Upd: %s"
-			var.Set("DisplayLine2", fmt:format(DayKWH ,os.date("%H:%M", ts)), PlugIn.ALTUI_SID)
+			local dl1 ="%d Watts"
+			local dl2 ="Day: %.3f  Last Upd: %s"
+			var.Set("DisplayLine1", dl1:format(watts), PlugIn.ALTUI_SID)
+			var.Set("DisplayLine2", dl2:format(DayKWH ,os.date("%H:%M", ts)), PlugIn.ALTUI_SID)
 		else
 			log.Log("Refresh failed "..(res or "unknown"),2)
 		end
