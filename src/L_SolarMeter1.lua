@@ -1,8 +1,10 @@
 --[==[
 	Module L_SolarMeter1.lua
 	Written by R.Boer. 
-	V1.2 10 April 2018
+	V1.3 16 April 2018
 
+	V1.3 Changes:
+		- Fix for Fronius support
 	V1.2 Changes:
 		- Corrected Dispay on latest version of ALTUI
 	V1.1 Changes:
@@ -437,7 +439,7 @@ function SS_FroniusAPI_Refresh()
 		local retData = json.decode(dataRaw)
 		
 		-- Get standard values
-		retData = retData.Data
+		retData = retData.Body.Data
 		if retData then
 			watts = tonumber(retData.PAC.Value)
 			DayKWH = retData.DAY_ENERGY.Value / 1000
@@ -643,6 +645,7 @@ function SolarMeter_Init(lul_device)
 	addSolarSystem(3, SS_SolarEdge_Init, SS_SolarEdge_Refresh)
 	addSolarSystem(4, SS_PVOutput_Init, SS_PVOutput_Refresh)
 	addSolarSystem(5, SS_SunGrow_Init, SS_SunGrow_Refresh)
+	addSolarSystem(6, SS_FroniusAPI_Init, SS_FroniusAPI_Refresh)
 	
 	-- Run Init function for specific solar system
 	local solSystem = var.GetNumber("System")
