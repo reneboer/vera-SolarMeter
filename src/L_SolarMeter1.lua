@@ -449,10 +449,10 @@ function SS_FroniusAPI_Refresh()
 			YearKWH = retData.YEAR_ENERGY.Value / 1000
 			LifeKWH = retData.TOTAL_ENERGY.Value / 1000
 			var.Set("Fronius_Status", retData.DeviceStatus.StatusCode)
-			var.Set("Fronius_IAC", retData.IAC.Value .. " " .. retData.IAC.Unit)
-			var.Set("Fronius_IDC", retData.IDC.Value .. " " .. retData.IDC.Unit)
-			var.Set("Fronius_UAC", retData.UAC.Value .. " " .. retData.UAC.Unit)
-			var.Set("Fronius_UDC", retData.UDC.Value .. " " .. retData.UDC.Unit)
+			var.Set("Fronius_IAC", retData.IAC.Value)
+			var.Set("Fronius_IDC", retData.IDC.Value)
+			var.Set("Fronius_UAC", retData.UAC.Value)
+			var.Set("Fronius_UDC", retData.UDC.Value)
 			-- Only update time stamp if watts or DayKWH are changed.
 			if watts == var.GetNumber("Watts", PlugIn.EM_SID) and DayKWH == var.GetNumber("DayKWH", PlugIn.EM_SID) then
 				ts = vat.GetNumber("LastRefresh", PlugIn.EM_SID)
