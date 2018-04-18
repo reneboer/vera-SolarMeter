@@ -1,8 +1,12 @@
 --[==[
 	Module L_SolarMeter1.lua
 	Written by R.Boer. 
-	V1.3 16 April 2018
+	V1.4.1 18 April 2018
 
+	V1.4.1 Changes:
+		- Added some fields for Fronius on request.
+	V1.4 Changes:
+		- Better error handling
 	V1.3 Changes:
 		- Fix for Fronius support
 	V1.2 Changes:
@@ -20,7 +24,7 @@ local socketLib = require("socket")  -- Required for logAPI module.
 local json = require("dkjson")
 
 local PlugIn = {
-	Version = "1.2",
+	Version = "1.4.1",
 	DESCRIPTION = "Solar Meter", 
 	SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
 	EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
@@ -335,7 +339,7 @@ function SS_EnphaseLocal_Init()
 end
 
 function SS_EnphaseLocal_Refresh()
-	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = 0,0,0,0,0,0
+	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = 0,0,0,0,0,0,0
 	local ipa = var.Get("EN_IPAddress")
 	local URL = "http://%s/api/v1/production"
 	URL = URL:format(ipa)
@@ -358,7 +362,7 @@ function SS_EnphaseLocal_Refresh()
 		end
 		return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
 	else
-		return "HTTP Get to "..URL.." failed. Error :"..HttpCode
+		return false, HttpCode, "HTTP Get to "..URL.." failed."
 	end
 end
 
@@ -403,12 +407,11 @@ function SS_EnphaseRemote_Refresh()
 		retData = nil 
 		return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
 	else
-		return "HTTP Get to "..URL.." failed. Error :"..HttpCode
+		return false, HttpCode, "HTTP Get to "..URL.." failed."
 	end	
 end
 
 -- For Fronius Solar API V1
--- Not tested.
 -- See http://www.fronius.com/en/photovoltaics/products/commercial/system-monitoring/open-interfaces/fronius-solar-api-json-
 function SS_FroniusAPI_Init()
 	local ipa = var.Get("FA_IPAddress")
@@ -446,6 +449,10 @@ function SS_FroniusAPI_Refresh()
 			YearKWH = retData.YEAR_ENERGY.Value / 1000
 			LifeKWH = retData.TOTAL_ENERGY.Value / 1000
 			var.Set("Fronius_Status", retData.DeviceStatus.StatusCode)
+			var.Set("Fronius_IAC", retData.IAC.Value .. " " .. retData.IAC.Unit)
+			var.Set("Fronius_IDC", retData.IDC.Value .. " " .. retData.IDC.Unit)
+			var.Set("Fronius_UAC", retData.UAC.Value .. " " .. retData.UAC.Unit)
+			var.Set("Fronius_UDC", retData.UDC.Value .. " " .. retData.UDC.Unit)
 			-- Only update time stamp if watts or DayKWH are changed.
 			if watts == var.GetNumber("Watts", PlugIn.EM_SID) and DayKWH == var.GetNumber("DayKWH", PlugIn.EM_SID) then
 				ts = vat.GetNumber("LastRefresh", PlugIn.EM_SID)
@@ -453,10 +460,10 @@ function SS_FroniusAPI_Refresh()
 			retData = nil 
 			return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
 		else
-			return "No data received."
+			return false, HttpCode, "No data received."
 		end
 	else
-		return "HTTP Get to "..URL.." failed. Error :"..HttpCode
+		return false, HttpCode, "HTTP Get to "..URL.." failed."
 	end	
 end
 
@@ -500,10 +507,10 @@ function SS_SolarEdge_Refresh()
 			retData = nil 
 			return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
 		else
-			return "No data received."
+			return false, HttpCode, "No data received."
 		end
 	else
-		return "HTTP Get to "..URL.." failed. Error :"..HttpCode
+		return false, HttpCode, "HTTP Get to "..URL.." failed."
 	end	
 end
 
@@ -549,10 +556,10 @@ function SS_SunGrow_Refresh()
 			retData = nil 
 			return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
 		else
-			return "No data received."
+			return false, HttpCode, "No data received."
 		end
 	else
-		return "HTTP Get to "..URL.." failed. Error :"..HttpCode
+		return false, HttpCode, "HTTP Get to "..URL.." failed."
 	end	
 end
 
@@ -593,10 +600,10 @@ function SS_PVOutput_Refresh()
 			retData = nil 
 			return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
 		else
-			return "No data received."
+			return false, HttpCode, "No data received."
 		end
 	else
-		return "HTTP Get to "..URL.." failed. Error :"..HttpCode
+		return false, HttpCode, "HTTP Get to "..URL.." failed."
 	end	
 end
 
@@ -720,12 +727,15 @@ function SolarMeter_Refresh()
 			var.Set("LifeKWH", LifeKWH, PlugIn.EM_SID)
 			var.Set("LastRefresh", ts,  PlugIn.EM_SID)
 			var.Set("LastUpdate", os.date("%H:%M %d %b", ts))
+			var.Set("HttpCode", "Ok")
 			local dl1 ="%d Watts"
 			local dl2 ="Day: %.3f  Last Upd: %s"
 			var.Set("DisplayLine1", dl1:format(watts), PlugIn.ALTUI_SID)
 			var.Set("DisplayLine2", dl2:format(DayKWH ,os.date("%H:%M", ts)), PlugIn.ALTUI_SID)
 		else
-			log.Log("Refresh failed "..(res or "unknown"),2)
+			log.Log("Refresh failed "..(watts or "unknown"),2)
+			var.Set("HttpCode", ts)
+			log.Debug(watts)
 		end
 	end
 end
