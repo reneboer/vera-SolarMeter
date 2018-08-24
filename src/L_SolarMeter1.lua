@@ -1,8 +1,20 @@
 --[==[
 	Module L_SolarMeter1.lua
 	Written by R.Boer. 
-	V1.4.1 18 April 2018
+	V1.5.2 23 August 2018
 
+	V1.5.2 Changes:
+		- Calculate running sums for weekly and monthy if not provided by converter.
+	V1.5.1 Changes:
+		- Better pcall return error handling.
+		- Bug fixes
+	V1.5 Changes:
+		- Optimized polling to only poll during day time.
+		- Handling of non-numerical return values when numbers are expected.
+	V1.4.3 Changes:
+		- Added fields for PV output.
+	V1.4.2 Changes:
+		- Changed PV output to be able to use http instead of https.
 	V1.4.1 Changes:
 		- Added some fields for Fronius on request.
 	V1.4 Changes:
@@ -24,7 +36,7 @@ local socketLib = require("socket")  -- Required for logAPI module.
 local json = require("dkjson")
 
 local PlugIn = {
-	Version = "1.4.1",
+	Version = "1.5.2",
 	DESCRIPTION = "Solar Meter", 
 	SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
 	EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
@@ -34,8 +46,9 @@ local PlugIn = {
 	StartingUp = true,
 	System = 0,
 	DInterval = 30,
-	NInterval = 1800
-
+	NInterval = 1800,
+	lastWeekDaily = nil,
+	thisMonthDaily = nil
 }
 local PluginImages = { 'SolarMeter1' }
 
@@ -281,12 +294,27 @@ local _OpenLuup = 99
 		end	
 	end
 	
+	function _split(source, delimiters)
+		local del = delimiters or ","
+		local elements = {}
+		local pattern = '([^'..del..']+)'
+		string.gsub(source, pattern, function(value) elements[#elements + 1] = value end)
+		return elements
+	end
+	
+	function _join(tab, delimeters)
+		local del = delimiters or ","
+		return table.concat(tab, del)
+	end
+	
 	return {
 		Initialize = _init,
 		ReloadLuup = _luup_reload,
 		CheckImages = _check_images,
 		GetMemoryUsed = _getmemoryused,
 		SetLuupFailure = _setluupfailure,
+		Split = _split,
+		Join = _join,
 		GetUI = _getui,
 		IsUI5 = _UI5,
 		IsUI6 = _UI6,
@@ -321,6 +349,79 @@ function SolarMeter_registerWithAltUI()
 	end
 end
 
+-- Get an attribute value, try to return as number value if applicable
+local function GetAsNumber(value)
+	local nv = tonumber(value,10)
+	return (nv or 0)
+end
+
+-- Initialize calculation array
+local function InitWeekTotal()
+	local arrV = var.Default("WeeklyDaily", "")
+	if arrV ~= "" then
+		lastWeekDaily = utils.Split(arrV)
+	else	
+		lastWeekDaily = {}
+	end
+end
+local function InitMonthTotal()
+	local arrV = var.Default("MonthlyDaily", "")
+	if arrV ~= "" then
+		thisMonthDaily = utils.Split(arrV)
+	else	
+		thisMonthDaily = {}
+	end
+end
+
+-- Calculate new weekly value, needs todays daily as input.
+local function GetWeekTotal(daily)
+	-- See if we have a new daily value, if so recalculate
+	local numDays = #lastWeekDaily
+	if numDays ~= 0 then
+		if daily ~= lastWeekDaily[numDays] then
+			local weekly = 0
+			lastWeekDaily[numDays] = daily
+			for i = 1, numDays do
+				weekly = weekly + lastWeekDaily[i]
+			end
+			var.Set("WeeklyDaily", utils.Join(lastWeekDaily))
+			return weekly
+		else
+			-- No change
+			return -1
+		end
+	else
+		-- Set first value in array
+		lastWeekDaily[1] = daily
+		var.Set("WeeklyDaily", daily)
+		return daily
+	end	
+end
+
+-- Calculate new current month value, needs todays daily as input.
+local function GetMonthTotal(daily)
+	-- See if we have a new daily value, if so recalculate
+	local numDays = #thisMonthDaily
+	if numDays ~= 0 then
+		if daily ~= thisMonthDaily[numDays] then
+			local monthly = 0
+			thisMonthDaily[numDays] = daily
+			for i = 1, numDays do
+				monthly = monthly + thisMonthDaily[i]
+			end
+			var.Set("MonthlyDaily", utils.Join(thisMonthDaily))
+			return monthly
+		else
+			-- No change
+			return -1
+		end
+	else
+		-- Set first value in array
+		thisMonthDaily[1] = daily
+		var.Set("MonthlyDaily", daily)
+		return daily
+	end	
+end
 
 ------------------------------------------------------------------------------------------
 -- Init and Refresh functions for supported systems.									--
@@ -335,34 +436,36 @@ function SS_EnphaseLocal_Init()
 		log.Log("Enphase Local, missing IP address.",3)
 		return false
 	end
+	InitMonthTotal()
 	return true
 end
 
 function SS_EnphaseLocal_Refresh()
-	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = 0,0,0,0,0,0,0
+	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = -1,-1,-1,-1,-1,-1,-1
 	local ipa = var.Get("EN_IPAddress")
 	local URL = "http://%s/api/v1/production"
 	URL = URL:format(ipa)
 	log.Debug("Envoy Local URL " .. URL)
 	ts = os.time()
-	local retCode, dataRaw, HttpCode  = luup.inet.wget(URL,5)
+	local retCode, dataRaw, HttpCode  = luup.inet.wget(URL,15)
 	if (retCode == 0 and HttpCode == 200) then
 		log.Debug("Retrieve HTTP Get Complete...")
 		log.Debug(dataRaw)
 		local retData = json.decode(dataRaw)
 		-- Set values in PowerMeter
-		watts = tonumber(retData.wattsNow)
-		DayKWH = retData.wattHoursToday/1000
-		WeekKWH = retData.wattHoursSevenDays/1000
-		LifeKWH = retData.wattHoursLifetime/1000
+		watts = GetAsNumber(retData.wattsNow)
+		DayKWH = GetAsNumber(retData.wattHoursToday)/1000
+		WeekKWH = GetAsNumber(retData.wattHoursSevenDays)/1000
+		LifeKWH = GetAsNumber(retData.wattHoursLifetime)/1000
+		MonthKWH = GetMonthTotal(DayKWH)
 		retData = nil 
 		-- Only update time stamp if watts or DayKWH are changed.
 		if watts == var.GetNumber("Watts", PlugIn.EM_SID) and DayKWH == var.GetNumber("DayKWH", PlugIn.EM_SID) then
-			ts = vat.GetNumber("LastRefresh", PlugIn.EM_SID)
+			ts = var.GetNumber("LastRefresh", PlugIn.EM_SID)
 		end
 		return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
 	else
-		return false, HttpCode, "HTTP Get to "..URL.." failed."
+		return false, (HttpCode or -99), "HTTP Get to "..URL.." failed."
 	end
 end
 
@@ -376,11 +479,13 @@ function SS_EnphaseRemote_Init()
 		log.Log("Enphase Remote, missing configuration details.",3)
 		return false
 	end
+	InitWeekTotal()
+	InitMonthTotal()
 	return true
 end
 
 function SS_EnphaseRemote_Refresh()
-	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = 0,0,0,0,0,0,0
+	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = -1,-1,-1,-1,-1,-1,-1
 	local key = var.Get("EN_APIKey")
 	local user = var.Get("EN_UserID")
 	local sys = var.Get("EN_SystemID")
@@ -393,9 +498,11 @@ function SS_EnphaseRemote_Refresh()
 		log.Debug(dataRaw)
 		local retData = json.decode(dataRaw)
 		-- Get standard values
-		watts = tonumber(retData.current_power)
-		DayKWH = retData.energy_today/1000
-		LifeKWH = retData.energy_lifetime/1000
+		watts = GetAsNumber(retData.current_power)
+		DayKWH = GetAsNumber(retData.energy_today)/1000
+		LifeKWH = GetAsNumber(retData.energy_lifetime)/1000
+		WeekKWH = GetWeekTotal(DayKWH)
+		MonthKWH = GetMonthTotal(DayKWH)
 
 		-- Get additional data
 		var.Set("Enphase_ModuleCount", retData.modules)
@@ -421,17 +528,19 @@ function SS_FroniusAPI_Init()
 		log.Log("Fronius API, missing configuration details.",3)
 		return false
 	end
+	InitWeekTotal()
+	InitMonthTotal()
 	return true
 end
 
 function SS_FroniusAPI_Refresh()
-	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = 0,0,0,0,0,0,0
+	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = -1,-1,-1,-1,-1,-1,-1
 	local ipa = var.Get("FA_IPAddress")
 	local dev = var.Get("FA_DeviceID")
 
 	local URL = "http://%s/solar_api/v1/GetInverterRealtimeData.cgi?Scope=Device&DeviceId=%s&DataCollection=CommonInverterData"
 	URL = URL:format(ipa,dev)
-	log.Debug("Florius URL " .. URL)
+	log.Debug("Fronius URL " .. URL)
 	ts = os.time()
 	local retCode, dataRaw, HttpCode = luup.inet.wget(URL,15)
 	if (retCode == 0 and HttpCode == 200) then
@@ -444,10 +553,12 @@ function SS_FroniusAPI_Refresh()
 		-- Get standard values
 		retData = retData.Body.Data
 		if retData then
-			watts = tonumber(retData.PAC.Value)
-			DayKWH = retData.DAY_ENERGY.Value / 1000
-			YearKWH = retData.YEAR_ENERGY.Value / 1000
-			LifeKWH = retData.TOTAL_ENERGY.Value / 1000
+			watts = GetAsNumber(retData.PAC.Value)
+			DayKWH = GetAsNumber(retData.DAY_ENERGY.Value) / 1000
+			YearKWH = GetAsNumber(retData.YEAR_ENERGY.Value) / 1000
+			LifeKWH = GetAsNumber(retData.TOTAL_ENERGY.Value) / 1000
+			WeekKWH = GetWeekTotal(DayKWH)
+			MonthKWH = GetMonthTotal(DayKWH)
 			var.Set("Fronius_Status", retData.DeviceStatus.StatusCode)
 			var.Set("Fronius_IAC", retData.IAC.Value)
 			var.Set("Fronius_IDC", retData.IDC.Value)
@@ -455,7 +566,7 @@ function SS_FroniusAPI_Refresh()
 			var.Set("Fronius_UDC", retData.UDC.Value)
 			-- Only update time stamp if watts or DayKWH are changed.
 			if watts == var.GetNumber("Watts", PlugIn.EM_SID) and DayKWH == var.GetNumber("DayKWH", PlugIn.EM_SID) then
-				ts = vat.GetNumber("LastRefresh", PlugIn.EM_SID)
+				ts = var.GetNumber("LastRefresh", PlugIn.EM_SID)
 			end
 			retData = nil 
 			return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
@@ -476,11 +587,12 @@ function SS_SolarEdge_Init()
 		log.Log("Solar Edge, missing configuration details.",3)
 		return false
 	end
+	InitWeekTotal()
 	return true
 end
 
 function SS_SolarEdge_Refresh()
-	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = 0,0,0,0,0,0,0
+	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = -1,-1,-1,-1,-1,-1,-1
 	local key = var.Get("SE_APIKey")
 	local sys = var.Get("SE_SystemID")
 
@@ -496,11 +608,12 @@ function SS_SolarEdge_Refresh()
 		-- Get standard values
 		retData = retData.overview
 		if retData then
-			watts = tonumber(retData.currentPower.power)
-			DayKWH = retData.lastDayData.energy/1000
-			MonthKWH = retData.lastMonthData.energy/1000
-			YearKWH = retData.lastYearData.energy/1000
-			LifeKWH = retData.lifeTimeData.energy/1000
+			watts = GetAsNumber(retData.currentPower.power)
+			DayKWH = GetAsNumber(retData.lastDayData.energy)/1000
+			WeekKWH = GetWeekTotal(DayKWH)
+			MonthKWH = GetAsNumber(retData.lastMonthData.energy)/1000
+			YearKWH = GetAsNumber(retData.lastYearData.energy)/1000
+			LifeKWH = GetAsNumber(retData.lifeTimeData.energy)/1000
 			local timefmt = "(%d+)-(%d+)-(%d+) (%d+):(%d+):(%d+)"
 			local yyyy,mm,dd,h,m,s = retData.lastUpdateTime:match(timefmt)
 			ts = os.time({day=dd,month=mm,year=yyyy,hour=h,min=m,sec=s})
@@ -525,11 +638,13 @@ function SS_SunGrow_Init()
 		log.Log("SUNGROW, missing configuration details.",3)
 		return false
 	end
+	InitWeekTotal()
+	InitMonthTotal()
 	return true
 end
 
 function SS_SunGrow_Refresh()
-	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = 0,0,0,0,0,0,0
+	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = -1,-1,-1,-1,-1,-1,-1
 	local uid = var.Get("SG_UserID")
 	local pwd = var.Get("SG_Password")
 
@@ -547,11 +662,13 @@ function SS_SunGrow_Refresh()
 		
 		-- Get standard values
 		if retData then
-			watts = math.floor(retData.power * 1000)
-			DayKWH = tonumber(retData.todayEnergy)
+			watts = math.floor(GetAsNumber(retData.power) * 1000)
+			DayKWH = GetAsNumber(retData.todayEnergy)
+			WeekKWH = GetWeekTotal(DayKWH)
+			MonthKWH = GetMonthTotal(DayKWH)
 			-- Only update time stamp if watts are updated.
 			if watts == var.GetNumber("Watts", PlugIn.EM_SID) then
-				ts = vat.GetNumber("LastRefresh", PlugIn.EM_SID)
+				ts = var.GetNumber("LastRefresh", PlugIn.EM_SID)
 			end
 			retData = nil 
 			return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
@@ -567,21 +684,25 @@ end
 function SS_PVOutput_Init()
 	local key = var.Get("PV_APIKey")
 	local sys = var.Get("PV_SystemID")
+	var.Default("PV_HTTPS",0)
 
 	if key == "" or sys == "" then
 		log.Log("PV Output, missing configuration details.",3)
 		return false
 	end
+	InitWeekTotal()
+	InitMonthTotal()
 	return true
 end
 
 function SS_PVOutput_Refresh()
-	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = 0,0,0,0,0,0,0
+	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = -1,-1,-1,-1,-1,-1,-1
 	local key = var.Get("PV_APIKey")
 	local sys = var.Get("PV_SystemID")
+	local sec = (((var.GetNumber("PV_HTTPS") == 1) and "s") or "")
 
-	local URL = "https://pvoutput.org/service/r2/getstatus.jsp?key=%s&sid=%s"
-	URL = URL:format(key,sys)
+	local URL = "http%s://pvoutput.org/service/r2/getstatus.jsp?key=%s&sid=%s"
+	URL = URL:format(sec,key,sys)
 	log.Debug("PV Output URL " .. URL)
 	local retCode, dataRaw, HttpCode = luup.inet.wget(URL,15)
 	if (retCode == 0 and HttpCode == 200) then
@@ -591,13 +712,20 @@ function SS_PVOutput_Refresh()
 		-- Get standard values
 		local d_t = {}
 		string.gsub(dataRaw,"(.-),", function(c) d_t[#d_t+1] = c end)
-		if #d_t > 2 then
-			watts = d_t[4]
-			DayKWH = d_t[3]/1000
+		if #d_t > 3 then
+			watts = GetAsNumber(d_t[4])
+			DayKWH = GetAsNumber(d_t[3])/1000
+			WeekKWH = GetWeekTotal(DayKWH)
+			MonthKWH = GetMonthTotal(DayKWH)
 			local timefmt = "(%d%d%d%d)(%d%d)(%d%d) (%d+):(%d+)"
 			local yyyy,mm,dd,h,m = string.match(d_t[1].." "..d_t[2],timefmt)
 			ts = os.time({day=dd,month=mm,year=yyyy,hour=h,min=m,sec=0})
 			retData = nil 
+			if #d_t > 4 then var.Set("PV_EnergyConsumption", d_t[5]) end
+			if #d_t > 5 then var.Set("PV_PowerConsumption", d_t[6]) end
+			if #d_t > 6 then var.Set("PV_NormalisedOutput", d_t[7]) end
+			if #d_t > 7 then var.Set("PV_Temperature", d_t[8]) end
+			if #d_t > 8 then var.Set("PV_Voltage", d_t[9]) end
 			return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
 		else
 			return false, HttpCode, "No data received."
@@ -638,7 +766,14 @@ function SolarMeter_Init(lul_device)
 	-- Read settings.
 	var.Default("System", PlugIn.System)
 	var.Default("DayInterval", PlugIn.DInterval)
-	var.Default("NightInterval", PlugIn.NInterval)
+--	var.Default("NightInterval", PlugIn.NInterval)
+	var.Default("Watts", 0, PlugIn.EM_SID)
+	var.Default("KWH", 0, PlugIn.EM_SID)
+	var.Default("DayKWH", 0, PlugIn.EM_SID)
+	var.Default("WeekKWH", 0, PlugIn.EM_SID)
+	var.Default("MonthKWH", 0, PlugIn.EM_SID)
+	var.Default("YearKWH", 0, PlugIn.EM_SID)
+	var.Default("LifeKWH", 0, PlugIn.EM_SID)
 	
 	-- Make sure icons are accessible when they should be. 
 	utils.CheckImages(PluginImages)
@@ -680,10 +815,30 @@ function SolarMeter_Init(lul_device)
 	end
 	
 	luup.call_delay("SolarMeter_Refresh", 30)
+	luup.call_timer("SolarMeter_DailyRefresh", 2, "00:00:01", "1,2,3,4,5,6,7")
 --	luup.call_delay("SolarMeter_registerWithAltUI", 40, "", false)
 	log.Debug("SolarMeter has started...")
 	utils.SetLuupFailure(0, PlugIn.THIS_DEVICE)
 	return true
+end
+
+-- Each midnight move the day up
+function SolarMeter_DailyRefresh()
+	local day = tonumber(os.date("%d"))
+	
+	-- New month, reset array.
+	if thisMonthDaily ~= nil then
+		if day == 1 then thisMonthDaily = {} end
+		thisMonthDaily[#thisMonthDaily + 1] = 0
+		var.Set("MonthlyDaily", utils.Join(thisMonthDaily))
+	end
+	
+	-- Add day to week, if we have seven days, pop first.
+	if lastWeekDaily ~= nil then
+		if #lastWeekDaily == 7 then table.remove(lastWeekDaily,1) end
+		lastWeekDaily[#lastWeekDaily + 1] = 0
+		var.Set("WeeklyDaily", utils.Join(lastWeekDaily))
+	end
 end
 
 -- Get values from solar system
@@ -692,15 +847,19 @@ function SolarMeter_Refresh()
 	local AppMemoryUsed =  math.floor(collectgarbage "count")
 	var.Set("AppMemoryUsed", AppMemoryUsed) 
 	-- Schedule next refresh
-	local interval 
-	if(luup.is_night()) then
-		interval = var.GetNumber("NightInterval")
-		log.Debug("Is Night use Night delayInterval SolarMeter_Retrieve --> "..interval)
+	local interval = var.GetNumber("DayInterval")
+	-- Offset now so we poll once after sunset.
+	local now = os.time() -- - interval
+	if (luup.is_night()) then
+		interval = os.difftime(luup.sunrise()+10,now)
+		log.Debug("Is Night start polling just after sunrise in "..interval.." seconds.")
+		log.Debug("Sun set is at : "..os.date('%c', luup.sunset()))
+		log.Debug("Sun rise is at : "..os.date('%c', luup.sunrise()))	
 	else 
-		interval = var.GetNumber("DayInterval")
-		log.Debug("Is Day use Day delay Interval SolarMeter_Retrieve --> "..interval)
+		log.Debug("Is Day use Day delay Interval SolarMeter_Refresh --> "..interval)
 	end
 	luup.call_delay("SolarMeter_Refresh",interval)	
+	log.Debug("Next poll is at : "..os.date('%c', now + interval))
 
 	-- Get system configured
 	local solSystem = var.GetNumber("System")
@@ -710,32 +869,37 @@ function SolarMeter_Refresh()
 	end
 	if my_sys then
 		local ret, res, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = pcall(my_sys.refresh)
-		if ret and (res == true) then
-			log.Debug("Current Power --> "..watts.." W")
-			log.Debug("KWH Today     --> "..DayKWH.." KWh")
-			log.Debug("KWH Week      --> "..WeekKWH.." KWh")
-			log.Debug("KWH Month     --> "..MonthKWH.." KWh")
-			log.Debug("KWH Year      --> "..YearKWH.." KWh")
-			log.Debug("KWH Lifetime  --> "..LifeKWH.." KWh")
-			-- Set values in PowerMeter
-			var.Set("Watts", watts, PlugIn.EM_SID)
-			var.Set("KWH", math.floor(DayKWH), PlugIn.EM_SID)
-			var.Set("DayKWH", DayKWH, PlugIn.EM_SID)
-			var.Set("WeekKWH", WeekKWH, PlugIn.EM_SID)
-			var.Set("MonthKWH", MonthKWH, PlugIn.EM_SID)
-			var.Set("YearKWH", YearKWH, PlugIn.EM_SID)
-			var.Set("LifeKWH", LifeKWH, PlugIn.EM_SID)
-			var.Set("LastRefresh", ts,  PlugIn.EM_SID)
-			var.Set("LastUpdate", os.date("%H:%M %d %b", ts))
-			var.Set("HttpCode", "Ok")
-			local dl1 ="%d Watts"
-			local dl2 ="Day: %.3f  Last Upd: %s"
-			var.Set("DisplayLine1", dl1:format(watts), PlugIn.ALTUI_SID)
-			var.Set("DisplayLine2", dl2:format(DayKWH ,os.date("%H:%M", ts)), PlugIn.ALTUI_SID)
+		if ret == true then 
+			if res == true then
+				log.Debug("Current Power --> "..watts.." W")
+				log.Debug("KWH Today     --> "..DayKWH.." KWh")
+				log.Debug("KWH Week      --> "..WeekKWH.." KWh")
+				log.Debug("KWH Month     --> "..MonthKWH.." KWh")
+				log.Debug("KWH Year      --> "..YearKWH.." KWh")
+				log.Debug("KWH Lifetime  --> "..LifeKWH.." KWh")
+				-- Set values in PowerMeter
+				var.Set("Watts", watts, PlugIn.EM_SID)
+				var.Set("KWH", math.floor(DayKWH), PlugIn.EM_SID)
+				if DayKWH ~= -1 then var.Set("DayKWH", DayKWH, PlugIn.EM_SID) end
+				if WeekKWH ~= -1 then var.Set("WeekKWH", WeekKWH, PlugIn.EM_SID) end
+				if MonthKWH ~= -1 then var.Set("MonthKWH", MonthKWH, PlugIn.EM_SID) end
+				if YearKWH ~= -1 then var.Set("YearKWH", YearKWH, PlugIn.EM_SID) end
+				if LifeKWH ~= -1 then var.Set("LifeKWH", LifeKWH, PlugIn.EM_SID) end
+				var.Set("LastRefresh", ts,  PlugIn.EM_SID)
+				var.Set("LastUpdate", os.date("%H:%M %d %b", ts))
+				var.Set("HttpCode", "Ok")
+				local dl1 ="%d Watts"
+				local dl2 ="Day: %.3f  Last Upd: %s"
+				var.Set("DisplayLine1", dl1:format(watts), PlugIn.ALTUI_SID)
+				var.Set("DisplayLine2", dl2:format(DayKWH ,os.date("%H:%M", ts)), PlugIn.ALTUI_SID)
+			else
+				log.Log("Refresh failed "..(watts or "unknown"),2)
+				var.Set("HttpCode", ts)
+				log.Debug(watts)
+			end
 		else
-			log.Log("Refresh failed "..(watts or "unknown"),2)
-			var.Set("HttpCode", ts)
-			log.Debug(watts)
+			log.Log("Refresh pcall error " ..(res or "unknown"),2)
+			var.Set("HttpCode", 0)
 		end
 	end
 end

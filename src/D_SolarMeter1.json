@@ -1,5 +1,5 @@
 {
-	"default_icon": "SolarMeter1.png",
+	"default_icon": "SolarMeter.png",
 	"inScene": "0",
 	"Tabs": [
 		{
@@ -138,7 +138,13 @@
 					"Height": 20 
 				} 
 			},
+               {
+                   "ControlGroup": "3",
+                   "ControlType": "spacer",
+				"HorizontalMultiplier": "0.7"
+			},
 			{
+				"ControlGroup":"3", 
 				"ControlPair":"3",
 				"ControlType":"label",
 				"top": 1,
@@ -146,7 +152,7 @@
 				"text_align" : "left",
 				"Label": {
 					"lang_tag": "energy_week",
-					"text": "This Week:" 
+					"text": "Last Week:" 
 				},
 				"Display": {
 					"Top": 120,
@@ -156,6 +162,7 @@
 				} 
 			},
 			{
+				"ControlGroup":"3", 
 				"ControlPair":"3",
 				"ControlType":"variable",
 				"top": 1,
@@ -171,6 +178,7 @@
 				} 
 			},
 			{
+				"ControlGroup":"3", 
 				"ControlPair":"3",
 				"ControlType":"label",
 				"top": 1,
@@ -329,41 +337,6 @@
 					"Top": 210,
 					"Left": 240,
 					"Width": 25,
-					"Height": 20 
-				} 
-			},
-			{
-				"ControlGroup": "3",
-				"ControlType": "spacer",
-				"HorizontalMultiplier": "0.7"
-			},
-			{
-				"ControlGroup":"3",
-				"ControlPair":"6",
-				"ControlType":"label",
-				"text_align":"left",
-				"Label": { "text": "Last Update :" 
-				},
-				"Display": {
-					"Top": 240,
-					"Left": 50,
-					"Width": 85,
-					"Height": 20 
-				} 
-			},
-			{
-				"ControlGroup":"3",
-				"ControlPair":"6",
-				"ControlType":"variable",
-				"top": 0,
-				"left": 0.5,
-				"text_align":"right",
-				"Display": {
-					"Service": "urn:rboer-com:serviceId:SolarMeter1",
-					"Variable": "LastUpdate",
-					"Top": 240,
-					"Left": 150,
-					"Width": 55,
 					"Height": 20 
 				} 
 			}
