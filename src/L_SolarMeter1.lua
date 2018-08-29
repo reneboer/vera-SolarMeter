@@ -815,7 +815,7 @@ function SolarMeter_Init(lul_device)
 	end
 	
 	luup.call_delay("SolarMeter_Refresh", 30)
-	luup.call_timer("SolarMeter_DailyRefresh", 2, "00:00:01", "1,2,3,4,5,6,7")
+	luup.call_timer("SolarMeter_DailyRefresh", 2, "00:00:01", "1,2,3,4,5,6,7", "")
 --	luup.call_delay("SolarMeter_registerWithAltUI", 40, "", false)
 	log.Debug("SolarMeter has started...")
 	utils.SetLuupFailure(0, PlugIn.THIS_DEVICE)
