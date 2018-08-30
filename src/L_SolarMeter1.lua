@@ -1,8 +1,10 @@
 --[==[
 	Module L_SolarMeter1.lua
 	Written by R.Boer. 
-	V1.5.2 23 August 2018
+	V1.5.3 30 August 2018
 
+	V1.5.3 Changes:
+		- Changed call_time to type 4 (absolute) as type 2 (daily) is not reliable.
 	V1.5.2 Changes:
 		- Calculate running sums for weekly and monthy if not provided by converter.
 	V1.5.1 Changes:
@@ -815,7 +817,8 @@ function SolarMeter_Init(lul_device)
 	end
 	
 	luup.call_delay("SolarMeter_Refresh", 30)
-	luup.call_timer("SolarMeter_DailyRefresh", 2, "00:00:01", "1,2,3,4,5,6,7", "")
+	-- Schedule next, it seems that call_time 2 (day of week) does not run reliable for multiple days.
+	luup.call_timer("SolarMeter_DailyRefresh", 4, os.date("%Y-%m-%d 00:00:10", (os.time() + 86400)), "", "")
 --	luup.call_delay("SolarMeter_registerWithAltUI", 40, "", false)
 	log.Debug("SolarMeter has started...")
 	utils.SetLuupFailure(0, PlugIn.THIS_DEVICE)
@@ -824,10 +827,12 @@ end
 
 -- Each midnight move the day up
 function SolarMeter_DailyRefresh()
-	local day = tonumber(os.date("%d"))
+	-- Schedule next, it seems that call_time 2 (day of week) does not run reliable for multiple days.
+	luup.call_timer("SolarMeter_DailyRefresh", 4, os.date("%Y-%m-%d 00:00:10", (os.time() + 86400)), "", "")
 	
 	-- New month, reset array.
 	if thisMonthDaily ~= nil then
+		local day = tonumber(os.date("%d"))
 		if day == 1 then thisMonthDaily = {} end
 		thisMonthDaily[#thisMonthDaily + 1] = 0
 		var.Set("MonthlyDaily", utils.Join(thisMonthDaily))
