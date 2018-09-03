@@ -1,10 +1,10 @@
 --[==[
 	Module L_SolarMeter1.lua
 	Written by R.Boer. 
-	V1.5.3 30 August 2018
+	V1.5.3 3 September 2018
 
 	V1.5.3 Changes:
-		- Changed call_time to type 4 (absolute) as type 2 (daily) is not reliable.
+		- call_timer to type 2 (daily) needs to be rescheduled. It does not repeat when calling just once.
 	V1.5.2 Changes:
 		- Calculate running sums for weekly and monthy if not provided by converter.
 	V1.5.1 Changes:
@@ -38,7 +38,7 @@ local socketLib = require("socket")  -- Required for logAPI module.
 local json = require("dkjson")
 
 local PlugIn = {
-	Version = "1.5.2",
+	Version = "1.5.3",
 	DESCRIPTION = "Solar Meter", 
 	SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
 	EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
@@ -817,8 +817,8 @@ function SolarMeter_Init(lul_device)
 	end
 	
 	luup.call_delay("SolarMeter_Refresh", 30)
-	-- Schedule next, it seems that call_time 2 (day of week) does not run reliable for multiple days.
-	luup.call_timer("SolarMeter_DailyRefresh", 4, os.date("%Y-%m-%d 00:00:10", (os.time() + 86400)), "", "")
+	-- Schedule first daily refresh near midnight.
+	luup.call_timer("SolarMeter_DailyRefresh", 2, "00:00:10", "1,2,3,4,5,6,7", "")
 --	luup.call_delay("SolarMeter_registerWithAltUI", 40, "", false)
 	log.Debug("SolarMeter has started...")
 	utils.SetLuupFailure(0, PlugIn.THIS_DEVICE)
@@ -827,8 +827,8 @@ end
 
 -- Each midnight move the day up
 function SolarMeter_DailyRefresh()
-	-- Schedule next, it seems that call_time 2 (day of week) does not run reliable for multiple days.
-	luup.call_timer("SolarMeter_DailyRefresh", 4, os.date("%Y-%m-%d 00:00:10", (os.time() + 86400)), "", "")
+	-- Schedule next daily refresh near midnight.
+	luup.call_timer("SolarMeter_DailyRefresh", 2, "00:00:10", "1,2,3,4,5,6,7", "")
 	
 	-- New month, reset array.
 	if thisMonthDaily ~= nil then
