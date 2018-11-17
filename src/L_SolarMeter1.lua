@@ -1,8 +1,10 @@
 --[==[
 	Module L_SolarMeter1.lua
 	Written by R.Boer. 
-	V1.5.3 3 September 2018
+	V1.5.4 17 November 2018
 
+	V1.5.4 Changes:
+		- Fix for saving settings on ALTUI.
 	V1.5.3 Changes:
 		- call_timer to type 2 (daily) needs to be rescheduled. It does not repeat when calling just once.
 	V1.5.2 Changes:

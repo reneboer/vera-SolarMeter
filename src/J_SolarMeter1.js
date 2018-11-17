@@ -1,7 +1,13 @@
 //# sourceURL=J_SolarMeter.js
 // SmartMeter control UI for UI7 and ALTUI
 // Written by R.Boer. 
-// V1.1 4 April 2018
+// V1.5.4 17 November 2018
+//
+// V1.5.4 Changes:
+//		Fix for saving settings on ALTUI
+//
+// V1.5 Changes:
+//		Only one poll interval as polling at night is suspended automatically.
 //
 // V1.1 Changes:
 //		Fronius JSON API V1 support
@@ -55,8 +61,8 @@ var SolarMeter = (function (api) {
 				html += '<br>Plugin is disabled in Attributes.</div>';
 			} else {
 				var curSystem = varGet(deviceID, 'System');
-				html += htmlAddPulldown(deviceID, 'Day time poll interval', 'DayInterval', dayInterval)+
-				htmlAddPulldown(deviceID, 'Night time poll interval', 'NightInterval', nightInterval)+
+				html += htmlAddPulldown(deviceID, 'Poll interval', 'DayInterval', dayInterval)+
+//				htmlAddPulldown(deviceID, 'Night time poll interval', 'NightInterval', nightInterval)+
 				htmlAddPulldown(deviceID, 'Solar System type', 'System', solarSystem)+
 				'<div id="'+DIV_PREFIX+deviceID+'div_system1" style="display: '+((curSystem === '1')?'block':'none')+';" >'+
 				htmlAddInput(deviceID, 'Envoy IP Address', 50, 'EN_IPAddress')+
@@ -132,7 +138,7 @@ var SolarMeter = (function (api) {
 		// Save variable values so we can access them in LUA without user needing to save
 		showBusy(true);
 		varSet(deviceID,'DayInterval',htmlGetPulldownSelection(deviceID, 'DayInterval'));
-		varSet(deviceID,'NightInterval',htmlGetPulldownSelection(deviceID, 'NightInterval'));
+//		varSet(deviceID,'NightInterval',htmlGetPulldownSelection(deviceID, 'NightInterval'));
 		varSet(deviceID,'System',htmlGetPulldownSelection(deviceID, 'System'));
 		varSet(deviceID,'EN_IPAddress',htmlGetElemVal(deviceID, 'EN_IPAddress'));
 		varSet(deviceID,'EN_APIKey',htmlGetElemVal(deviceID, 'EN_APIKey'));
@@ -149,8 +155,8 @@ var SolarMeter = (function (api) {
 		varSet(deviceID,'LogLevel',htmlGetPulldownSelection(deviceID, 'LogLevel'));
 		varSet(deviceID,'Syslog',htmlGetElemVal(deviceID, 'Syslog'));
 		application.sendCommandSaveUserData(true);
-		doReload(deviceID);
 		setTimeout(function() {
+			doReload(deviceID);
 			showBusy(false);
 			try {
 				api.ui.showMessagePopup(Utils.getLangString("ui7_device_cpanel_details_saved_success","Device details saved successfully."),0);
