@@ -380,36 +380,185 @@
 		"Function": "device_notifications" 
 	} 
 	],
-	"eventList": {
-		"event_1": {
-			"label": "Energy production goes above",
+	"eventList2": [
+		{
+			"id": 5,
+			"label": {
+				"lang_tag": "ui7_energy_usage_goes_above",
+				"text": "Energy usage goes above"
+			},
 			"serviceId": "urn:micasaverde-com:serviceId:EnergyMetering1",
 			"norepeat": "1",
-			"argumentList" : {
-				"argument_1" : {
+			"argumentList": [
+				{
+					"id": 1,
 					"dataType": "i4",
 					"name": "Watts",
 					"comparisson": ">",
-					"prefix": "Watts: ",
-					"suffix": ""
+					"prefix": {
+						"lang_tag": "ui7_general_ucase_watts",
+						"text": "Watts"
+					},
+					"suffix": "",
+					"HumanFriendlyText": {
+						"lang_tag": "ui7_hft_energy_usage_goes_above",
+						"text": "Energy usage for _DEVICE_NAME_ goes above _ARGUMENT_VALUE_ Watts"
+					}
 				}
-			}
+			]
 		},
-		"event_2": {
-			"label": "Energy production goes below",
+		{
+			"id": 6,
+			"label": {
+				"lang_tag": "ui7_energy_usage_goes_below",
+				"text": "Energy usage goes below"
+			},
 			"serviceId": "urn:micasaverde-com:serviceId:EnergyMetering1",
 			"norepeat": "1",
-			"argumentList" : {
-				"argument_1" : {
+			"argumentList": [
+				{
+					"id": 1,
 					"dataType": "i4",
 					"name": "Watts",
 					"comparisson": "<",
-					"prefix": "Watts: ",
-					"suffix": ""
+					"prefix": {
+						"lang_tag": "ui7_general_ucase_watts",
+						"text": "Watts"
+					},
+					"suffix": {},
+					"HumanFriendlyText": {
+						"lang_tag": "ui7_hft_energy_usage_goes_below",
+						"text": "Whenever the energy usage for _DEVICE_NAME_ goes below _ARGUMENT_VALUE_ Watts"
+					},
+                    "minValue": 1
 				}
-			}
+			]
+		},
+		{
+			"id": 2,
+			"label": {
+				"lang_tag": "ui7_wh_energy_usage_24_goes_above",
+				"text": "Device energy usage for last 24 hours goes above"
+			},
+			"serviceId": "urn:micasaverde-com:serviceId:EnergyMetering1",
+			"argumentList": [
+				{
+					"id": 1,
+					"dataType": "i4",
+					"name": "DayKWH",
+					"comparisson": ">",
+					"prefix": {
+						"lang_tag": "kwh",
+						"text": "KWH"
+					},
+					"suffix": "",
+					"HumanFriendlyText": {
+						"lang_tag": "ui7_kwh_usage_goes_above_day_dev",
+						"text": "Total energy usage for _DEVICE_NAME_ goes over _ARGUMENT_VALUE_ KWH in the last day"
+					}
+				}
+			]
+		},
+		{
+			"id": 7,
+			"label": {
+				"lang_tag": "ui7_wh_energy_usage_7_goes_above",
+				"text": "Device energy usage for last week goes above"
+			},
+			"serviceId": "urn:micasaverde-com:serviceId:EnergyMetering1",
+			"argumentList": [
+				{
+					"id": 1,
+					"dataType": "i4",
+					"name": "WeekKWH",
+					"comparisson": ">",
+					"prefix": {
+						"lang_tag": "kwh",
+						"text": "KWH"
+					},
+					"suffix": "",
+					"HumanFriendlyText": {
+						"lang_tag": "ui7_kwh_usage_goes_above_week_dev",
+						"text": "Total energy usage for _DEVICE_NAME_ goes over _ARGUMENT_VALUE_ KWH in the last week"
+					}
+				}
+			]
+		},
+		{
+			"id": 3,
+			"label": {
+				"lang_tag": "ui7_wh_energy_usage_30_goes_below",
+				"text": "Device energy usage for last 30 days goes above"
+			},
+			"serviceId": "urn:micasaverde-com:serviceId:EnergyMetering1",
+			"argumentList": [
+				{
+					"id": 1,
+					"dataType": "i4",
+					"name": "MonthKWH",
+					"comparisson": ">",
+					"prefix": {
+						"lang_tag": "kwh",
+						"text": "KWH"
+					},
+					"suffix": "",
+					"HumanFriendlyText": {
+						"lang_tag": "ui7_kwh_usage_goes_below_month_dev",
+						"text": "Total energy usage for _DEVICE_NAME_ goes above _ARGUMENT_VALUE_ KWH in the last 30 days"
+					}
+				}
+			]
+		},
+		{
+			"id": 4,
+			"label": {
+				"lang_tag": "ui7_wh_energy_usage_365_goes_below",
+				"text": "Device energy usage for last year goes above"
+			},
+			"serviceId": "urn:micasaverde-com:serviceId:EnergyMetering1",
+			"argumentList": [
+				{
+					"id": 1,
+					"dataType": "i4",
+					"name": "YearKWH",
+					"comparisson": ">",
+					"prefix": {
+						"lang_tag": "kwh",
+						"text": "KWH"
+					},
+					"suffix": "",
+					"HumanFriendlyText": {
+						"lang_tag": "ui7_kwh_usage_goes_below_year_dev",
+						"text": "Total energy usage for _DEVICE_NAME_ goes above _ARGUMENT_VALUE_ KWH in the last year"
+					}
+				}
+			]
+		},
+		{
+			"id": 8,
+			"label": {
+				"lang_tag": "ui7_wh_energy_usage_life_goes_below",
+				"text": "Lifetime device energy usage goes above"
+			},
+			"serviceId": "urn:micasaverde-com:serviceId:EnergyMetering1",
+			"argumentList": [
+				{
+					"id": 1,
+					"dataType": "i4",
+					"name": "LifeKWH",
+					"comparisson": ">",
+					"prefix": {
+						"lang_tag": "kwh",
+						"text": "KWH"
+					},
+					"suffix": "",
+					"HumanFriendlyText": {
+						"lang_tag": "ui7_kwh_usage_goes_below_lifetime_dev",
+						"text": "Lifetime energy usage for _DEVICE_NAME_ goes above _ARGUMENT_VALUE_ KWH"
+					}
+				}
+			]
 		}
-	} ,
-	"DeviceType": "urn:schemas-rboer-com:device:SolarMeter:1", 
+	],
 	"device_type": "urn:schemas-rboer-com:device:SolarMeter:1" 
 }
