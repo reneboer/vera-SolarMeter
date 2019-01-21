@@ -1,7 +1,7 @@
 # vera-SolarMeter
 Plugin to read solar production data supporting several Solar systems.
 
-Version 1.5 will calculate the weekly, last 7 days, total and/or this month values if teh converter does not supply them. Note it does this by summing the daily values, so it will take 7 days to build the weekly and monthly will be correct after the first new month.
+Version 1.7 will calculate the weekly, last 7 days, monthly total and/or year total values if the converter does not supply them. Note it does this by summing the daily values or monthly, so it will take 7 days to build the weekly, monthly will be correct after the first new month and yearly from january on.
 
 Supports:
 - Enphase Envoy local API
