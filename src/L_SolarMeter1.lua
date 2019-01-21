@@ -1,66 +1,69 @@
 --[==[
-	Module L_SolarMeter1.lua
-	Written by R.Boer. 
-	V1.5.4 17 November 2018
+  Module L_SolarMeter1.lua
+  Written by R.Boer. 
+  V1.7 21 January 2019
 
-	V1.5.4 Changes:
-		- Fix for saving settings on ALTUI.
-	V1.5.3 Changes:
-		- call_timer to type 2 (daily) needs to be rescheduled. It does not repeat when calling just once.
-	V1.5.2 Changes:
-		- Calculate running sums for weekly and monthy if not provided by converter.
-	V1.5.1 Changes:
-		- Better pcall return error handling.
-		- Bug fixes
-	V1.5 Changes:
-		- Optimized polling to only poll during day time.
-		- Handling of non-numerical return values when numbers are expected.
-	V1.4.3 Changes:
-		- Added fields for PV output.
-	V1.4.2 Changes:
-		- Changed PV output to be able to use http instead of https.
-	V1.4.1 Changes:
-		- Added some fields for Fronius on request.
-	V1.4 Changes:
-		- Better error handling
-	V1.3 Changes:
-		- Fix for Fronius support
-	V1.2 Changes:
-		- Corrected Dispay on latest version of ALTUI
-	V1.1 Changes:
-		- Fronius JSON API V1 support
-		- Some big fixes
-	
- 	V1.0 First release
+  V1.7 Changes:
+	- Corrected logic for calculated weekly and monthly totals.
+	- Polling for the day only stopping once current watts are zero, not right after sunset. Some systems are slow to report and where missing last values.
+	- Added Yearly total.
+  V1.6 Changes:
+    - call_timer to type 2 (daily) needs to be rescheduled. It does not repeat when calling just once.
+  V1.5.2 Changes:
+    - Calculate running sums for weekly and monthy if not provided by converter.
+  V1.5.1 Changes:
+    - Better pcall return error handling.
+    - Bug fixes
+  V1.5 Changes:
+    - Optimized polling to only poll during day time.
+    - Handling of non-numerical return values when numbers are expected.
+  V1.4.3 Changes:
+    - Added fields for PV output.
+  V1.4.2 Changes:
+    - Changed PV output to be able to use http instead of https.
+  V1.4.1 Changes:
+    - Added some fields for Fronius on request.
+  V1.4 Changes:
+    - Better error handling
+  V1.3 Changes:
+    - Fix for Fronius support
+  V1.2 Changes:
+    - Corrected Dispay on latest version of ALTUI
+  V1.1 Changes:
+    - Fronius JSON API V1 support
+    - Some big fixes
+  
+   V1.0 First release
 
-	Get data from several Solar systems
+  Get data from several Solar systems
 --]==]
 
 local socketLib = require("socket")  -- Required for logAPI module.
 local json = require("dkjson")
 
 local PlugIn = {
-	Version = "1.5.3",
-	DESCRIPTION = "Solar Meter", 
-	SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
-	EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
-	ALTUI_SID = "urn:upnp-org:serviceId:altui1",
-	THIS_DEVICE = 0,
-	Disabled = false,
-	StartingUp = true,
-	System = 0,
-	DInterval = 30,
-	NInterval = 1800,
-	lastWeekDaily = nil,
-	thisMonthDaily = nil
+  Version = "1.7",
+  DESCRIPTION = "Solar Meter", 
+  SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
+  EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
+  ALTUI_SID = "urn:upnp-org:serviceId:altui1",
+  THIS_DEVICE = 0,
+  Disabled = false,
+  StartingUp = true,
+  System = 0,
+  DInterval = 30,
+  NInterval = 1800,
+  lastWeekDaily = nil,
+  thisMonthDaily = nil,
+  thisYearMonthy = nil
 }
 local PluginImages = { 'SolarMeter1' }
 
 -- To map solar systems. Must be in sync with var solarSystem in J_SolarMeter1.js
 local SolarSystems = {}
 local function addSolarSystem(k, i, r)
-	SolarSystems[k] = {init = i, refresh = r}
-end	
+  SolarSystems[k] = {init = i, refresh = r}
+end  
 
 ---------------------------------------------------------------------------------------------
 -- Utility functions
@@ -72,69 +75,69 @@ local utils
 
 -- API getting and setting variables and attributes from Vera more efficient.
 local function varAPI()
-	local def_sid, def_dev = '', 0
-	
-	local function _init(sid,dev)
-		def_sid = sid
-		def_dev = dev
-	end
-	
-	-- Get variable value
-	local function _get(name, sid, device)
-		local value = luup.variable_get(sid or def_sid, name, tonumber(device or def_dev))
-		return (value or '')
-	end
+  local def_sid, def_dev = '', 0
+  
+  local function _init(sid,dev)
+    def_sid = sid
+    def_dev = dev
+  end
+  
+  -- Get variable value
+  local function _get(name, sid, device)
+    local value = luup.variable_get(sid or def_sid, name, tonumber(device or def_dev))
+    return (value or '')
+  end
 
-	-- Get variable value as number type
-	local function _getnum(name, sid, device)
-		local value = luup.variable_get(sid or def_sid, name, tonumber(device or def_dev))
-		local num = tonumber(value,10)
-		return (num or 0)
-	end
-	
-	-- Set variable value
-	local function _set(name, value, sid, device)
-		local sid = sid or def_sid
-		local device = tonumber(device or def_dev)
-		local old = luup.variable_get(sid, name, device)
-		if (tostring(value) ~= tostring(old or '')) then 
-			luup.variable_set(sid, name, value, device)
-		end
-	end
+  -- Get variable value as number type
+  local function _getnum(name, sid, device)
+    local value = luup.variable_get(sid or def_sid, name, tonumber(device or def_dev))
+    local num = tonumber(value,10)
+    return (num or 0)
+  end
+  
+  -- Set variable value
+  local function _set(name, value, sid, device)
+    local sid = sid or def_sid
+    local device = tonumber(device or def_dev)
+    local old = luup.variable_get(sid, name, device)
+    if (tostring(value) ~= tostring(old or '')) then 
+      luup.variable_set(sid, name, value, device)
+    end
+  end
 
-	-- create missing variable with default value or return existing
-	local function _default(name, default, sid, device)
-		local sid = sid or def_sid
-		local device = tonumber(device or def_dev)
-		local value = luup.variable_get(sid, name, device) 
-		if (not value) then
-			value = default	or ''
-			luup.variable_set(sid, name, value, device)	
-		end
-		return value
-	end
-	
-	-- Get an attribute value, try to return as number value if applicable
-	local function _getattr(name, device)
-		local value = luup.attr_get(name, tonumber(device or def_dev))
-		local nv = tonumber(value,10)
-		return (nv or value)
-	end
+  -- create missing variable with default value or return existing
+  local function _default(name, default, sid, device)
+    local sid = sid or def_sid
+    local device = tonumber(device or def_dev)
+    local value = luup.variable_get(sid, name, device) 
+    if (not value) then
+      value = default  or ''
+      luup.variable_set(sid, name, value, device)  
+    end
+    return value
+  end
+  
+  -- Get an attribute value, try to return as number value if applicable
+  local function _getattr(name, device)
+    local value = luup.attr_get(name, tonumber(device or def_dev))
+    local nv = tonumber(value,10)
+    return (nv or value)
+  end
 
-	-- Set an attribute
-	local function _setattr(name, value, device)
-		luup.attr_set(name, value, tonumber(device or def_dev))
-	end
-	
-	return {
-		Get = _get,
-		Set = _set,
-		GetNumber = _getnum,
-		Default = _default,
-		GetAttribute = _getattr,
-		SetAttribute = _setattr,
-		Initialize = _init
-	}
+  -- Set an attribute
+  local function _setattr(name, value, device)
+    luup.attr_set(name, value, tonumber(device or def_dev))
+  end
+  
+  return {
+    Get = _get,
+    Set = _set,
+    GetNumber = _getnum,
+    Default = _default,
+    GetAttribute = _getattr,
+    SetAttribute = _setattr,
+    Initialize = _init
+  }
 end
 
 -- API to handle basic logging and debug messaging. V2.0, requires socketlib
@@ -148,94 +151,94 @@ local def_prefix = ''
 local def_debug = false
 local syslog
 
-	-- Syslog server support. From Netatmo plugin by akbooer
-	local function _init_syslog_server(ip_and_port, tag, hostname)
-		local sock = socketLib.udp()
-		local facility = 1    -- 'user'
---		local emergency, alert, critical, error, warning, notice, info, debug = 0,1,2,3,4,5,6,7
-		local ip, port = ip_and_port:match "^(%d+%.%d+%.%d+%.%d+):(%d+)$"
-		if not ip or not port then return nil, "invalid IP or PORT" end
-		local serialNo = luup.pk_accesspoint
-		hostname = ("Vera-"..serialNo) or "Vera"
-		if not tag or tag == '' then tag = def_prefix end
-		tag = tag:gsub("[^%w]","") or "No TAG"  -- only alphanumeric, no spaces or other
-		local function send (self, content, severity)
-			content  = tostring (content)
-			severity = tonumber (severity) or 6
-			local priority = facility*8 + (severity%8)
-			local msg = ("<%d>%s %s %s: %s\n"):format (priority, os.date "%b %d %H:%M:%S", hostname, tag, content)
-			sock:send(msg) 
-		end
-		local ok, err = sock:setpeername(ip, port)
-		if ok then ok = {send = send} end
-		return ok, err
-	end
+  -- Syslog server support. From Netatmo plugin by akbooer
+  local function _init_syslog_server(ip_and_port, tag, hostname)
+    local sock = socketLib.udp()
+    local facility = 1    -- 'user'
+--    local emergency, alert, critical, error, warning, notice, info, debug = 0,1,2,3,4,5,6,7
+    local ip, port = ip_and_port:match "^(%d+%.%d+%.%d+%.%d+):(%d+)$"
+    if not ip or not port then return nil, "invalid IP or PORT" end
+    local serialNo = luup.pk_accesspoint
+    hostname = ("Vera-"..serialNo) or "Vera"
+    if not tag or tag == '' then tag = def_prefix end
+    tag = tag:gsub("[^%w]","") or "No TAG"  -- only alphanumeric, no spaces or other
+    local function send (self, content, severity)
+      content  = tostring (content)
+      severity = tonumber (severity) or 6
+      local priority = facility*8 + (severity%8)
+      local msg = ("<%d>%s %s %s: %s\n"):format (priority, os.date "%b %d %H:%M:%S", hostname, tag, content)
+      sock:send(msg) 
+    end
+    local ok, err = sock:setpeername(ip, port)
+    if ok then ok = {send = send} end
+    return ok, err
+  end
 
-	local function _update(level)
-		if level > 10 then
-			def_debug = true
-			def_level = 10
-		else
-			def_debug = false
-			def_level = level
-		end
-	end	
+  local function _update(level)
+    if level > 10 then
+      def_debug = true
+      def_level = 10
+    else
+      def_debug = false
+      def_level = level
+    end
+  end  
 
-	local function _init(prefix, level)
-		_update(level)
-		def_prefix = prefix
-	end	
+  local function _init(prefix, level)
+    _update(level)
+    def_prefix = prefix
+  end  
 
-	local function _set_syslog(sever)
-		if (sever ~= '') then
-			_log('Starting UDP syslog service...',7) 
-			local err
-			syslog, err = _init_syslog_server(server, def_prefix)
-			if (not syslog) then _log('UDP syslog service error: '..err,2) end
-		else
-			syslog = nil
-		end	
-	end
+  local function _set_syslog(sever)
+    if (sever ~= '') then
+      _log('Starting UDP syslog service...',7) 
+      local err
+      syslog, err = _init_syslog_server(server, def_prefix)
+      if (not syslog) then _log('UDP syslog service error: '..err,2) end
+    else
+      syslog = nil
+    end  
+  end
 
-	local function _log(text, level) 
-		local level = (level or 10)
-		local msg = (text or "no text")
-		if (def_level >= level) then
-			if (syslog) then
-				local slvl
-				if (level == 1) then slvl = 2 
-				elseif (level == 2) then slvl = 4 
-				elseif (level == 3) then slvl = 5 
-				elseif (level == 4) then slvl = 5 
-				elseif (level == 7) then slvl = 6 
-				elseif (level == 8) then slvl = 6 
-				else slvl = 7
-				end
-				syslog:send(msg,slvl) 
-			else
-				if (level == 10) then level = 50 end
-				luup.log(def_prefix .. ": " .. msg:sub(1,80), (level or 50)) 
-			end	
-		end	
-	end	
-	
-	local function _debug(text)
-		if def_debug then
-			luup.log(def_prefix .. "_debug: " .. (text or "no text"), 50) 
-		end	
-	end
-	
-	return {
-		Initialize = _init,
-		LLError = _LLError,
-		LLWarning = _LLWarning,
-		LLInfo = _LLInfo,
-		LLDebug = _LLDebug,
-		Update = _update,
-		SetSyslog = _set_syslog,
-		Log = _log,
-		Debug = _debug
-	}
+  local function _log(text, level) 
+    local level = (level or 10)
+    local msg = (text or "no text")
+    if (def_level >= level) then
+      if (syslog) then
+        local slvl
+        if (level == 1) then slvl = 2 
+        elseif (level == 2) then slvl = 4 
+        elseif (level == 3) then slvl = 5 
+        elseif (level == 4) then slvl = 5 
+        elseif (level == 7) then slvl = 6 
+        elseif (level == 8) then slvl = 6 
+        else slvl = 7
+        end
+        syslog:send(msg,slvl) 
+      else
+        if (level == 10) then level = 50 end
+        luup.log(def_prefix .. ": " .. msg:sub(1,80), (level or 50)) 
+      end  
+    end  
+  end  
+  
+  local function _debug(text)
+    if def_debug then
+      luup.log(def_prefix .. "_debug: " .. (text or "no text"), 50) 
+    end  
+  end
+  
+  return {
+    Initialize = _init,
+    LLError = _LLError,
+    LLWarning = _LLWarning,
+    LLInfo = _LLInfo,
+    LLDebug = _LLDebug,
+    Update = _update,
+    SetSyslog = _set_syslog,
+    Log = _log,
+    Debug = _debug
+  }
 end 
 
 -- API to handle some Util functions
@@ -246,112 +249,87 @@ local _UI7 = 7
 local _UI8 = 8
 local _OpenLuup = 99
 
-	local function _init()
-	end	
+  local function _init()
+  end  
 
-	-- See what system we are running on, some Vera or OpenLuup
-	local function _getui()
-		if (luup.attr_get("openLuup",0) ~= nil) then
-			return _OpenLuup
-		else
-			return luup.version_major
-		end
-		return _UI7
-	end
-	
-	local function _getmemoryused()
-		return math.floor(collectgarbage "count")         -- app's own memory usage in kB
-	end
-	
-	local function _setluupfailure(status,devID)
-		if (luup.version_major < 7) then status = status ~= 0 end        -- fix UI5 status type
-		luup.set_failure(status,devID)
-	end
+  -- See what system we are running on, some Vera or OpenLuup
+  local function _getui()
+    if (luup.attr_get("openLuup",0) ~= nil) then
+      return _OpenLuup
+    else
+      return luup.version_major
+    end
+    return _UI7
+  end
+  
+  local function _getmemoryused()
+    return math.floor(collectgarbage "count")         -- app's own memory usage in kB
+  end
+  
+  local function _setluupfailure(status,devID)
+    if (luup.version_major < 7) then status = status ~= 0 end        -- fix UI5 status type
+    luup.set_failure(status,devID)
+  end
 
-	-- Luup Reload function for UI5,6 and 7
-	local function _luup_reload()
-		if (luup.version_major < 6) then 
-			luup.call_action("urn:micasaverde-com:serviceId:HomeAutomationGateway1", "Reload", {}, 0)
-		else
-			luup.reload()
-		end
-	end
-	
-	-- Create links for UI6 or UI7 image locations if missing.
-	local function _check_images(imageTable)
-		local imagePath =""
-		local sourcePath = "/www/cmh/skins/default/icons/"
-		if (luup.version_major >= 7) then
-			imagePath = "/www/cmh/skins/default/img/devices/device_states/"
-		elseif (luup.version_major == 6) then
-			imagePath = "/www/cmh_ui6/skins/default/icons/"
-		else
-			-- Default if for UI5, no idea what applies to older versions
-			imagePath = "/www/cmh/skins/default/icons/"
-		end
-		if (imagePath ~= sourcePath) then
-			for i = 1, #imageTable do
-				local source = sourcePath..imageTable[i]..".png"
-				local target = imagePath..imageTable[i]..".png"
-				os.execute(("[ ! -e %s ] && ln -s %s %s"):format(target, source, target))
-			end
-		end	
-	end
-	
-	function _split(source, delimiters)
-		local del = delimiters or ","
-		local elements = {}
-		local pattern = '([^'..del..']+)'
-		string.gsub(source, pattern, function(value) elements[#elements + 1] = value end)
-		return elements
-	end
-	
-	function _join(tab, delimeters)
-		local del = delimiters or ","
-		return table.concat(tab, del)
-	end
-	
-	return {
-		Initialize = _init,
-		ReloadLuup = _luup_reload,
-		CheckImages = _check_images,
-		GetMemoryUsed = _getmemoryused,
-		SetLuupFailure = _setluupfailure,
-		Split = _split,
-		Join = _join,
-		GetUI = _getui,
-		IsUI5 = _UI5,
-		IsUI6 = _UI6,
-		IsUI7 = _UI7,
-		IsUI8 = _UI8,
-		IsOpenLuup = _OpenLuup
-	}
+  -- Luup Reload function for UI5,6 and 7
+  local function _luup_reload()
+    if (luup.version_major < 6) then 
+      luup.call_action("urn:micasaverde-com:serviceId:HomeAutomationGateway1", "Reload", {}, 0)
+    else
+      luup.reload()
+    end
+  end
+  
+  -- Create links for UI6 or UI7 image locations if missing.
+  local function _check_images(imageTable)
+    local imagePath =""
+    local sourcePath = "/www/cmh/skins/default/icons/"
+    if (luup.version_major >= 7) then
+      imagePath = "/www/cmh/skins/default/img/devices/device_states/"
+    elseif (luup.version_major == 6) then
+      imagePath = "/www/cmh_ui6/skins/default/icons/"
+    else
+      -- Default if for UI5, no idea what applies to older versions
+      imagePath = "/www/cmh/skins/default/icons/"
+    end
+    if (imagePath ~= sourcePath) then
+      for i = 1, #imageTable do
+        local source = sourcePath..imageTable[i]..".png"
+        local target = imagePath..imageTable[i]..".png"
+        os.execute(("[ ! -e %s ] && ln -s %s %s"):format(target, source, target))
+      end
+    end  
+  end
+  
+  function _split(source, delimiters)
+    local del = delimiters or ","
+    local elements = {}
+    local pattern = '([^'..del..']+)'
+    string.gsub(source, pattern, function(value) elements[#elements + 1] = value end)
+    return elements
+  end
+  
+  function _join(tab, delimeters)
+    local del = delimiters or ","
+    return table.concat(tab, del)
+  end
+  
+  return {
+    Initialize = _init,
+    ReloadLuup = _luup_reload,
+    CheckImages = _check_images,
+    GetMemoryUsed = _getmemoryused,
+    SetLuupFailure = _setluupfailure,
+    Split = _split,
+    Join = _join,
+    GetUI = _getui,
+    IsUI5 = _UI5,
+    IsUI6 = _UI6,
+    IsUI7 = _UI7,
+    IsUI8 = _UI8,
+    IsOpenLuup = _OpenLuup
+  }
 end 
-
-
-function SolarMeter_registerWithAltUI()
-	-- Register with ALTUI once it is ready
-	local ALTUI_SID = "urn:upnp-org:serviceId:altui1"
-	for k, v in pairs(luup.devices) do
-		if (v.device_type == "urn:schemas-upnp-org:device:altui:1") then
-			if luup.is_ready(k) then
-				log.Debug("Found ALTUI device "..k.." registering devices.")
-				local arguments = {}
-				arguments["newDeviceType"] = "urn:schemas-rboer-com:device:SolarMeter:1"
-				arguments["newScriptFile"] = "J_ALTUI_SolarMeter.js"	
-				arguments["newDeviceDrawFunc"] = "ALTUI_SolarMeterDisplays.drawSolarMeter"	
-				arguments["newStyleFunc"] = ""	
-				arguments["newDeviceIconFunc"] = ""	
-				arguments["newControlPanelFunc"] = ""	
-				luup.call_action(ALTUI_SID, "RegisterPlugin", arguments, k)
-			else
-				log.Debug("ALTUI plugin is not yet ready, retry in a bit..")
-				luup.call_delay("SolarMeter_registerWithAltUI", 10, "", false)
-			end
-			break
-		end
-	end
-end
 
 -- Get an attribute value, try to return as number value if applicable
 local function GetAsNumber(value)
@@ -361,74 +339,114 @@ end
 
 -- Initialize calculation array
 local function InitWeekTotal()
-	local arrV = var.Default("WeeklyDaily", "")
-	if arrV ~= "" then
-		lastWeekDaily = utils.Split(arrV)
-	else	
-		lastWeekDaily = {}
+	local arrV = var.Default("WeeklyDaily", "0,0,0,0,0,0,0")
+	lastWeekDaily = utils.Split(arrV)
+	-- See if we have too many entries due to errors in version 1.6
+	if #lastWeekDaily > 7 then
+		-- Drop what we have too many
+        while #lastWeekDaily > 7 do 
+            table.remove(lastWeekDaily,1)
+        end    
 	end
 end
 local function InitMonthTotal()
-	local arrV = var.Default("MonthlyDaily", "")
-	if arrV ~= "" then
-		thisMonthDaily = utils.Split(arrV)
-	else	
-		thisMonthDaily = {}
+	local arrV = var.Default("MonthlyDaily", "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
+	thisMonthDaily = utils.Split(arrV)
+	-- See if we have too many entries due to errors in version 1.6
+	if #thisMonthDaily > 31 then
+		-- Drop what we have too many
+		local numDays = tonumber(os.date("%d"))
+        while #thisMonthDaily > numDays do 
+            table.remove(thisMonthDaily,1)
+        end    
 	end
+end
+local function InitYearTotal()
+	local arrV = var.Default("YearlyMonthly", "0,0,0,0,0,0,0,0,0,0,0,0")
+	thisYearMonthly = utils.Split(arrV)
 end
 
 -- Calculate new weekly value, needs todays daily as input.
 local function GetWeekTotal(daily)
 	-- See if we have a new daily value, if so recalculate
-	local numDays = #lastWeekDaily
-	if numDays ~= 0 then
-		if daily ~= lastWeekDaily[numDays] then
-			local weekly = 0
-			lastWeekDaily[numDays] = daily
-			for i = 1, numDays do
-				weekly = weekly + lastWeekDaily[i]
-			end
-			var.Set("WeeklyDaily", utils.Join(lastWeekDaily))
-			return weekly
-		else
-			-- No change
-			return -1
+	local numDays = tonumber(os.date("%w")) + 1
+	if daily ~= tonumber(lastWeekDaily[numDays]) then
+		local total = 0
+		lastWeekDaily[numDays] = daily
+		-- Add up seven days total
+		for i = 1, 7 do
+			total = total + lastWeekDaily[i]
 		end
-	else
-		-- Set first value in array
-		lastWeekDaily[1] = daily
-		var.Set("WeeklyDaily", daily)
-		return daily
-	end	
+		var.Set("WeeklyDaily", utils.Join(lastWeekDaily))
+		return total
+    else
+		-- No change
+		return -1
+    end
 end
 
 -- Calculate new current month value, needs todays daily as input.
 local function GetMonthTotal(daily)
 	-- See if we have a new daily value, if so recalculate
-	local numDays = #thisMonthDaily
-	if numDays ~= 0 then
-		if daily ~= thisMonthDaily[numDays] then
-			local monthly = 0
+	local numDays = tonumber(os.date("%d"))
+	if numDays ~= 1 then
+		if daily ~= tonumber(thisMonthDaily[numDays]) then
+			local total = 0
 			thisMonthDaily[numDays] = daily
 			for i = 1, numDays do
-				monthly = monthly + thisMonthDaily[i]
+				total = total + thisMonthDaily[i]
 			end
 			var.Set("MonthlyDaily", utils.Join(thisMonthDaily))
-			return monthly
+			return total
 		else
 			-- No change
 			return -1
 		end
 	else
 		-- Set first value in array
-		thisMonthDaily[1] = daily
-		var.Set("MonthlyDaily", daily)
-		return daily
-	end	
+		if daily ~= tonumber(thisMonthDaily[1]) then
+			thisMonthDaily[1] = daily
+			var.Set("MonthlyDaily", utils.Join(thisMonthDaily))
+			return daily
+		else
+			-- No change
+			return -1
+		end
+	end  
+end
+
+-- Calculate new current month value, needs current monthly as input.
+local function GetYearTotal(monthly)
+	-- See if we have a new daily value, if so recalculate
+	local month = tonumber(os.date("%m"))
+	if month ~= 1 then
+		if monthly ~= tonumber(thisYearMonthly[month]) then
+			local total = 0
+			thisYearMonthly[month] = monthly
+			for i = 1, month do
+				total = total + thisYearMonthly[i]
+			end
+			var.Set("YearlyMonthly", utils.Join(thisYearMonthly))
+			return total
+		else
+			-- No change
+			return -1
+		end
+	else
+		-- Set first value in array
+		if monthly ~= tonumber(thisYearMonthly[1]) then
+			thisYearMonthly[1] = monthly
+			var.Set("YearlyMonthly", utils.Join(thisYearMonthly))
+			return monthly
+		else
+			-- No change
+			return -1
+		end
+	end  
 end
 
 ------------------------------------------------------------------------------------------
--- Init and Refresh functions for supported systems.									--
+-- Init and Refresh functions for supported systems.                  --
 -- Init and Refresh to return true on success, false on faiure
 -- Refresh on success also returns timestamp of sample, Watts, DayKWH, WeekKWH, MonthKWH, LifetimeKWH
 ------------------------------------------------------------------------------------------
@@ -441,6 +459,7 @@ function SS_EnphaseLocal_Init()
 		return false
 	end
 	InitMonthTotal()
+	InitYearTotal()
 	return true
 end
 
@@ -462,6 +481,7 @@ function SS_EnphaseLocal_Refresh()
 		WeekKWH = GetAsNumber(retData.wattHoursSevenDays)/1000
 		LifeKWH = GetAsNumber(retData.wattHoursLifetime)/1000
 		MonthKWH = GetMonthTotal(DayKWH)
+		YearKWH = GetYearTotal(MonthKWH)
 		retData = nil 
 		-- Only update time stamp if watts or DayKWH are changed.
 		if watts == var.GetNumber("Watts", PlugIn.EM_SID) and DayKWH == var.GetNumber("DayKWH", PlugIn.EM_SID) then
@@ -485,6 +505,7 @@ function SS_EnphaseRemote_Init()
 	end
 	InitWeekTotal()
 	InitMonthTotal()
+	InitYearTotal()
 	return true
 end
 
@@ -507,6 +528,7 @@ function SS_EnphaseRemote_Refresh()
 		LifeKWH = GetAsNumber(retData.energy_lifetime)/1000
 		WeekKWH = GetWeekTotal(DayKWH)
 		MonthKWH = GetMonthTotal(DayKWH)
+		YearKWH = GetYearTotal(MonthKWH)
 
 		-- Get additional data
 		var.Set("Enphase_ModuleCount", retData.modules)
@@ -519,7 +541,7 @@ function SS_EnphaseRemote_Refresh()
 		return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
 	else
 		return false, HttpCode, "HTTP Get to "..URL.." failed."
-	end	
+	end  
 end
 
 -- For Fronius Solar API V1
@@ -553,7 +575,7 @@ function SS_FroniusAPI_Refresh()
 
 		-- Get standard values
 		local retData = json.decode(dataRaw)
-		
+    
 		-- Get standard values
 		retData = retData.Body.Data
 		if retData then
@@ -579,7 +601,7 @@ function SS_FroniusAPI_Refresh()
 		end
 	else
 		return false, HttpCode, "HTTP Get to "..URL.." failed."
-	end	
+	end  
 end
 
 -- Solar Edge. thanks to cmille34. http://forum.micasaverde.com/index.php/topic,39157.msg355189.html#msg355189
@@ -608,7 +630,7 @@ function SS_SolarEdge_Refresh()
 		log.Debug("Retrieve HTTP Get Complete...")
 		log.Debug(dataRaw)
 		local retData = json.decode(dataRaw)
-		
+    
 		-- Get standard values
 		retData = retData.overview
 		if retData then
@@ -628,7 +650,7 @@ function SS_SolarEdge_Refresh()
 		end
 	else
 		return false, HttpCode, "HTTP Get to "..URL.." failed."
-	end	
+	end  
 end
 
 -- For SunGrow. Note clear text password over non-secure connection to China!
@@ -644,6 +666,7 @@ function SS_SunGrow_Init()
 	end
 	InitWeekTotal()
 	InitMonthTotal()
+	InitYearTotal()
 	return true
 end
 
@@ -663,13 +686,14 @@ function SS_SunGrow_Refresh()
 
 		-- Get standard values
 		local retData = json.decode(dataRaw)
-		
+    
 		-- Get standard values
 		if retData then
 			watts = math.floor(GetAsNumber(retData.power) * 1000)
 			DayKWH = GetAsNumber(retData.todayEnergy)
 			WeekKWH = GetWeekTotal(DayKWH)
 			MonthKWH = GetMonthTotal(DayKWH)
+			YearKWH = GetYearTotal(MonthKWH)
 			-- Only update time stamp if watts are updated.
 			if watts == var.GetNumber("Watts", PlugIn.EM_SID) then
 				ts = var.GetNumber("LastRefresh", PlugIn.EM_SID)
@@ -681,7 +705,7 @@ function SS_SunGrow_Refresh()
 		end
 	else
 		return false, HttpCode, "HTTP Get to "..URL.." failed."
-	end	
+	end  
 end
 
 -- For PV Output. Usefull when this plugin does not support your system
@@ -696,6 +720,7 @@ function SS_PVOutput_Init()
 	end
 	InitWeekTotal()
 	InitMonthTotal()
+	InitYearTotal()
 	return true
 end
 
@@ -721,6 +746,7 @@ function SS_PVOutput_Refresh()
 			DayKWH = GetAsNumber(d_t[3])/1000
 			WeekKWH = GetWeekTotal(DayKWH)
 			MonthKWH = GetMonthTotal(DayKWH)
+			YearKWH = GetYearTotal(MonthKWH)
 			local timefmt = "(%d%d%d%d)(%d%d)(%d%d) (%d+):(%d+)"
 			local yyyy,mm,dd,h,m = string.match(d_t[1].." "..d_t[2],timefmt)
 			ts = os.time({day=dd,month=mm,year=yyyy,hour=h,min=m,sec=0})
@@ -736,7 +762,7 @@ function SS_PVOutput_Refresh()
 		end
 	else
 		return false, HttpCode, "HTTP Get to "..URL.." failed."
-	end	
+	end  
 end
 
 ------------------------------------------------------------------------------------------
@@ -748,14 +774,13 @@ function SolarMeter_Init(lul_device)
 	var = varAPI()
 	utils = utilsAPI()
 	var.Initialize(PlugIn.SM_SID, PlugIn.THIS_DEVICE)
-	
+  
 	var.Default("LogLevel", log.LLError)
 	log.Initialize(PlugIn.DESCRIPTION, var.GetNumber("LogLevel"))
 	utils.Initialize()
-	
+  
 	log.Log("Starting version "..PlugIn.Version.." device: " .. tostring(PlugIn.THIS_DEVICE),3)
 	var.Set("Version", PlugIn.Version)
-
 	var.Default("ActualUsage", 1, PlugIn.EM_SID)
 
 	-- See if user disabled plug-in 
@@ -770,7 +795,6 @@ function SolarMeter_Init(lul_device)
 	-- Read settings.
 	var.Default("System", PlugIn.System)
 	var.Default("DayInterval", PlugIn.DInterval)
---	var.Default("NightInterval", PlugIn.NInterval)
 	var.Default("Watts", 0, PlugIn.EM_SID)
 	var.Default("KWH", 0, PlugIn.EM_SID)
 	var.Default("DayKWH", 0, PlugIn.EM_SID)
@@ -778,11 +802,11 @@ function SolarMeter_Init(lul_device)
 	var.Default("MonthKWH", 0, PlugIn.EM_SID)
 	var.Default("YearKWH", 0, PlugIn.EM_SID)
 	var.Default("LifeKWH", 0, PlugIn.EM_SID)
-	
+  
 	-- Make sure icons are accessible when they should be. 
 	utils.CheckImages(PluginImages)
 
-	-- set up logging to syslog	
+	-- set up logging to syslog  
 	log.SetSyslog(var.Default("Syslog")) -- send to syslog if IP address and Port 'XXX.XX.XX.XXX:YYY' (default port 514)
 
 	-- Put known systems routines in map, keep in sync with J_SolarMeter.js var solarSystem
@@ -792,7 +816,7 @@ function SolarMeter_Init(lul_device)
 	addSolarSystem(4, SS_PVOutput_Init, SS_PVOutput_Refresh)
 	addSolarSystem(5, SS_SunGrow_Init, SS_SunGrow_Refresh)
 	addSolarSystem(6, SS_FroniusAPI_Init, SS_FroniusAPI_Refresh)
-	
+  
 	-- Run Init function for specific solar system
 	local solSystem = var.GetNumber("System")
 	local my_sys = nil
@@ -812,40 +836,16 @@ function SolarMeter_Init(lul_device)
 				return false, "Configure system parameters via Settings.", PlugIn.DESCRIPTION
 			end
 		end
-	else	
+	else  
 		log.Log("No solar system selected ",2)
 		utils.SetLuupFailure(1, PlugIn.THIS_DEVICE)
 		return false, "Configure solar system via Settings.", PlugIn.DESCRIPTION
 	end
-	
+  
 	luup.call_delay("SolarMeter_Refresh", 30)
-	-- Schedule first daily refresh near midnight.
-	luup.call_timer("SolarMeter_DailyRefresh", 2, "00:00:10", "1,2,3,4,5,6,7", "")
---	luup.call_delay("SolarMeter_registerWithAltUI", 40, "", false)
 	log.Debug("SolarMeter has started...")
 	utils.SetLuupFailure(0, PlugIn.THIS_DEVICE)
 	return true
-end
-
--- Each midnight move the day up
-function SolarMeter_DailyRefresh()
-	-- Schedule next daily refresh near midnight.
-	luup.call_timer("SolarMeter_DailyRefresh", 2, "00:00:10", "1,2,3,4,5,6,7", "")
-	
-	-- New month, reset array.
-	if thisMonthDaily ~= nil then
-		local day = tonumber(os.date("%d"))
-		if day == 1 then thisMonthDaily = {} end
-		thisMonthDaily[#thisMonthDaily + 1] = 0
-		var.Set("MonthlyDaily", utils.Join(thisMonthDaily))
-	end
-	
-	-- Add day to week, if we have seven days, pop first.
-	if lastWeekDaily ~= nil then
-		if #lastWeekDaily == 7 then table.remove(lastWeekDaily,1) end
-		lastWeekDaily[#lastWeekDaily + 1] = 0
-		var.Set("WeeklyDaily", utils.Join(lastWeekDaily))
-	end
 end
 
 -- Get values from solar system
@@ -855,17 +855,18 @@ function SolarMeter_Refresh()
 	var.Set("AppMemoryUsed", AppMemoryUsed) 
 	-- Schedule next refresh
 	local interval = var.GetNumber("DayInterval")
-	-- Offset now so we poll once after sunset.
+	-- Offset now so we poll once after sunset and current watts is zero.
+	local watts = var.GetNumber("Watts", PlugIn.EM_SID)
 	local now = os.time() -- - interval
-	if (luup.is_night()) then
+	if (watts == 0) and luup.is_night() then
 		interval = os.difftime(luup.sunrise()+10,now)
-		log.Debug("Is Night start polling just after sunrise in "..interval.." seconds.")
+		log.Debug("Is Night, restart polling just after sunrise in "..interval.." seconds.")
 		log.Debug("Sun set is at : "..os.date('%c', luup.sunset()))
-		log.Debug("Sun rise is at : "..os.date('%c', luup.sunrise()))	
+		log.Debug("Sun rise is at : "..os.date('%c', luup.sunrise()))  
 	else 
 		log.Debug("Is Day use Day delay Interval SolarMeter_Refresh --> "..interval)
 	end
-	luup.call_delay("SolarMeter_Refresh",interval)	
+	luup.call_delay("SolarMeter_Refresh",interval)  
 	log.Debug("Next poll is at : "..os.date('%c', now + interval))
 
 	-- Get system configured
