@@ -1,8 +1,10 @@
 --[==[
   Module L_SolarMeter1.lua
   Written by R.Boer. 
-  V1.7 21 January 2019
+  V1.8 22 January 2019
 
+  V1.8 Changes:
+    - Fix for yearly calculations.
   V1.7 Changes:
 	- Corrected logic for calculated weekly and monthly totals.
 	- Polling for the day only stopping once current watts are zero, not right after sunset. Some systems are slow to report and where missing last values.
@@ -368,6 +370,7 @@ end
 
 -- Calculate new weekly value, needs todays daily as input.
 local function GetWeekTotal(daily)
+	if daily == -1 then return -1 end
 	-- See if we have a new daily value, if so recalculate
 	local numDays = tonumber(os.date("%w")) + 1
 	if daily ~= tonumber(lastWeekDaily[numDays]) then
@@ -387,6 +390,7 @@ end
 
 -- Calculate new current month value, needs todays daily as input.
 local function GetMonthTotal(daily)
+	if daily == -1 then return -1 end
 	-- See if we have a new daily value, if so recalculate
 	local numDays = tonumber(os.date("%d"))
 	if numDays ~= 1 then
@@ -417,6 +421,7 @@ end
 
 -- Calculate new current month value, needs current monthly as input.
 local function GetYearTotal(monthly)
+	if monthly == -1 then return -1 end
 	-- See if we have a new daily value, if so recalculate
 	local month = tonumber(os.date("%m"))
 	if month ~= 1 then
@@ -887,8 +892,10 @@ function SolarMeter_Refresh()
 				log.Debug("KWH Lifetime  --> "..LifeKWH.." KWh")
 				-- Set values in PowerMeter
 				var.Set("Watts", watts, PlugIn.EM_SID)
-				var.Set("KWH", math.floor(DayKWH), PlugIn.EM_SID)
-				if DayKWH ~= -1 then var.Set("DayKWH", DayKWH, PlugIn.EM_SID) end
+				if DayKWH ~= -1 then 
+					var.Set("KWH", math.floor(DayKWH), PlugIn.EM_SID)
+					var.Set("DayKWH", DayKWH, PlugIn.EM_SID) 
+				end
 				if WeekKWH ~= -1 then var.Set("WeekKWH", WeekKWH, PlugIn.EM_SID) end
 				if MonthKWH ~= -1 then var.Set("MonthKWH", MonthKWH, PlugIn.EM_SID) end
 				if YearKWH ~= -1 then var.Set("YearKWH", YearKWH, PlugIn.EM_SID) end
