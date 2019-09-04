@@ -21,10 +21,6 @@
 			<name>DayInterval</name>
 			<dataType>ui4</dataType>
 		</stateVariable>
-		<stateVariable sendEvents="no">
-			<name>NightInterval</name>
-			<dataType>ui4</dataType>
-		</stateVariable>
 	</serviceStateTable>
 	<actionList>
 	</actionList>
