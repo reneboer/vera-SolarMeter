@@ -1,7 +1,10 @@
 //# sourceURL=J_SolarMeter.js
 // SmartMeter control UI for UI7 and ALTUI
 // Written by R.Boer. 
-// V1.5.4 17 November 2018
+// V1.9 4 September 2019
+//
+// V1.9 Changes:
+//		SolarMan support
 //
 // V1.5.4 Changes:
 //		Fix for saving settings on ALTUI
@@ -48,10 +51,8 @@ var SolarMeter = (function (api) {
         try {
 			var deviceID = api.getCpanelDeviceId();
 			var deviceObj = api.getDeviceObject(deviceID);
-			var numSystems = 3;
 			var dayInterval = [{'value':'10','label':'10 Seconds'},{'value':'30','label':'30 Seconds'},{'value':'60','label':'1 Minute'},{'value':'120','label':'2 Minutes'},{'value':'300','label':'5 Minutes'},{'value':'600','label':'10 Minutes'},{'value':'900','label':'15 Minutes'}];
-			var nightInterval = [{'value':'300','label':'5 Minutes'},{'value':'600','label':'10 Minutes'},{'value':'900','label':'15 Minutes'},{'value':'1800','label':'30 Minutes'},{'value':'3600','label':'1 Hour'}];
-			var solarSystem = [{'value':'0','label':'Please select...'},{'value':'1','label':'Enphase Envoy API'},{'value':'2','label':'Enphase Remote API'},{'value':'6','label':'Fronius API V1'},{'value':'4','label':'PV Output'},{'value':'3','label':'Solar Edge'},{'value':'5','label':'SUNGROW Power'}];
+			var solarSystem = [{'value':'0','label':'Please select...'},{'value':'1','label':'Enphase Envoy API'},{'value':'2','label':'Enphase Remote API'},{'value':'6','label':'Fronius API V1'},{'value':'4','label':'PV Output'},{'value':'3','label':'Solar Edge'},{'value':'7','label':'Solarman'},{'value':'5','label':'SUNGROW Power'}];
 			var yesNo = [{'value':'0','label':'No'},{'value':'1','label':'Yes'}];
 			var logLevel = [{'value':'1','label':'Error'},{'value':'2','label':'Warning'},{'value':'8','label':'Info'},{'value':'11','label':'Debug'}];
 			var fronDev = [{'value':'0','label':'0'},{'value':'1','label':'1'},{'value':'2','label':'2'},{'value':'3','label':'3'},{'value':'4','label':'4'},{'value':'5','label':'5'},{'value':'6','label':'6'},{'value':'7','label':'7'},{'value':'8','label':'8'},{'value':'9','label':'9'}];
@@ -88,8 +89,14 @@ var SolarMeter = (function (api) {
 				htmlAddInput(deviceID, 'Fronius IP Address', 50, 'FA_IPAddress')+
 				htmlAddPulldown(deviceID, 'Fronius Device ID', 'FA_DeviceID', fronDev)+
 				'</div>'+
+				'<div id="'+DIV_PREFIX+deviceID+'div_system7" style="display: '+((curSystem === '7')?'block':'none')+';" >'+
+				htmlAddInput(deviceID, 'Solarman Device ID', 20, 'SM_DeviceID')+
+				htmlAddInput(deviceID, 'Solarman RememberMe Token', 80, 'SM_rememberMe')+
+				htmlAddPulldown(deviceID, 'Show House Power meter', 'ShowHouseChild', yesNo)+
+				htmlAddPulldown(deviceID, 'Show Grid Power meters', 'ShowGridChild', yesNo)+
+				htmlAddPulldown(deviceID, 'Show Battery Power meters', 'ShowBatteryChild', yesNo)+
+				'</div>'+
 				htmlAddPulldown(deviceID, 'Log level', 'LogLevel', logLevel)+
-				htmlAddInput(deviceID, 'Syslog server IP Address:Port', 30, 'Syslog') + 
 				htmlAddButton(deviceID, 'UpdateSettings')+
 				'</div>'+
 				'<script>'+
@@ -100,12 +107,14 @@ var SolarMeter = (function (api) {
 				'   $("#'+DIV_PREFIX+deviceID+'div_system4").fadeOut(); '+
 				'   $("#'+DIV_PREFIX+deviceID+'div_system5").fadeOut(); '+
 				'   $("#'+DIV_PREFIX+deviceID+'div_system6").fadeOut(); '+
+				'   $("#'+DIV_PREFIX+deviceID+'div_system7").fadeOut(); '+
 				'   if ($(this).val() == 1) { $("#'+DIV_PREFIX+deviceID+'div_system1").fadeIn(); }; '+
 				'   if ($(this).val() == 2) { $("#'+DIV_PREFIX+deviceID+'div_system2").fadeIn(); }; '+
 				'   if ($(this).val() == 3) { $("#'+DIV_PREFIX+deviceID+'div_system3").fadeIn(); }; '+
 				'   if ($(this).val() == 4) { $("#'+DIV_PREFIX+deviceID+'div_system4").fadeIn(); }; '+
 				'   if ($(this).val() == 5) { $("#'+DIV_PREFIX+deviceID+'div_system5").fadeIn(); }; '+
 				'   if ($(this).val() == 6) { $("#'+DIV_PREFIX+deviceID+'div_system6").fadeIn(); }; '+
+				'   if ($(this).val() == 7) { $("#'+DIV_PREFIX+deviceID+'div_system7").fadeIn(); }; '+
 				' } );'+
 				'</script>';
 			}
@@ -138,7 +147,6 @@ var SolarMeter = (function (api) {
 		// Save variable values so we can access them in LUA without user needing to save
 		showBusy(true);
 		varSet(deviceID,'DayInterval',htmlGetPulldownSelection(deviceID, 'DayInterval'));
-//		varSet(deviceID,'NightInterval',htmlGetPulldownSelection(deviceID, 'NightInterval'));
 		varSet(deviceID,'System',htmlGetPulldownSelection(deviceID, 'System'));
 		varSet(deviceID,'EN_IPAddress',htmlGetElemVal(deviceID, 'EN_IPAddress'));
 		varSet(deviceID,'EN_APIKey',htmlGetElemVal(deviceID, 'EN_APIKey'));
@@ -152,8 +160,12 @@ var SolarMeter = (function (api) {
 		varSet(deviceID,'SG_Password',htmlGetElemVal(deviceID, 'SG_Password'));
 		varSet(deviceID,'FA_IPAddress',htmlGetElemVal(deviceID, 'FA_IPAddress'));
 		varSet(deviceID,'FA_DeviceID',htmlGetElemVal(deviceID, 'FA_DeviceID'));
+		varSet(deviceID,'SM_rememberMe',htmlGetElemVal(deviceID, 'SM_rememberMe'));
+		varSet(deviceID,'SM_DeviceID',htmlGetElemVal(deviceID, 'SM_DeviceID'));
 		varSet(deviceID,'LogLevel',htmlGetPulldownSelection(deviceID, 'LogLevel'));
-		varSet(deviceID,'Syslog',htmlGetElemVal(deviceID, 'Syslog'));
+		varSet(deviceID,'ShowHouseChild',htmlGetPulldownSelection(deviceID, 'ShowHouseChild'));
+		varSet(deviceID,'ShowGridChild',htmlGetPulldownSelection(deviceID, 'ShowGridChild'));
+		varSet(deviceID,'ShowBatteryChild',htmlGetPulldownSelection(deviceID, 'ShowBatteryChild'));
 		application.sendCommandSaveUserData(true);
 		setTimeout(function() {
 			doReload(deviceID);
