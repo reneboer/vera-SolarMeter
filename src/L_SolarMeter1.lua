@@ -2,14 +2,12 @@
   Module L_SolarMeter1.lua
   Written by R.Boer. 
 
-V1.9 22 January 2019
+  V1.10 26 November 2019
 
+  V1.10 Changes:
+    - Fixes for Solarman monitoring - Octoplayer & somersetdude
   V1.9 Changes:
     - Addition of Solarman monitoring - Octoplayer
-
-.
-  V1.8 22 January 2019
-
   V1.8 Changes:
     - Fix for yearly calculations.
   V1.7 Changes:
@@ -53,7 +51,7 @@ local http = require("socket.http")
 local ltn12 = require("ltn12")
 
 local PlugIn = {
-  Version = "1.9a",
+  Version = "1.10",
   DESCRIPTION = "Solar Meter", 
   SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
   EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
@@ -940,20 +938,13 @@ function SS_Solarman_Refresh()
 			js_res = json.decode(dataRaw)
 			if js_res ~= nil then
 			  	local retData = js_res.result.deviceWapper
-				ts = retData.updateDate / 1000
 				-- Solar Inverter Data
 				local volts, amps = 0,0
 				for key, value in pairs(retData.dataJSON) do
-					if key == "1af" then 		-- AC Output Total Power (Active)  [ not found?? ]  use AC Voltage R/U/A * AC Current R/U/A ??
-						volts = tonumber(value)
-						if amps ~= 0 then 
-							watts = math.floor(volts * amps)
-						end
-					elseif key == "1ai" then 		-- AC Output Total Power (Active)  [ not found?? ]  use AC Voltage R/U/A * AC Current R/U/A ??
-						amps = var.GetNumber(value)
-						if amps ~= 0 then 
-							watts = math.floor(volts * amps)
-						end
+					if key == "dt" then
+						ts = value / 1000
+					elseif key == "1ab" then 		-- DC Output Total Power (Active)
+						watts = tonumber(value)
 					elseif key == "1bd" then 		-- Daily Generation (Active)
 						DayKWH = tonumber(value)
 						WeekKWH = GetWeekTotal(DayKWH)
@@ -977,8 +968,6 @@ function SS_Solarman_Refresh()
 					elseif key == "1cs" then 	
 						var.Set("BatteryCurrent",tonumber(value))
 					elseif key == "1ct" then 	
-						var.Set("BatteryPower",tonumber(value))
-					elseif key == "1lh" then 	-- Not sure to use Charge-Discharge Power or Battery  Power
 						var.Set("BatteryWatts",tonumber(value))
 					elseif key == "1cz" then 	
 						var.Set("BatteryDayChargedKWH",tonumber(value))
