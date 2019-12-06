@@ -1,13 +1,14 @@
 # vera-SolarMeter
 Plugin to read solar production data supporting several Solar systems.
 
-Version 1.7 will calculate the weekly, last 7 days, monthly total and/or year total values if the converter does not supply them. Note it does this by summing the daily values or monthly, so it will take 7 days to build the weekly, monthly will be correct after the first new month and yearly from January on.
+As of version 1.7 the weekly, last 7 days, monthly total and/or year total values will be calculated if the converter does not supply them. Note it does this by summing the daily values or monthly, so it will take 7 days to build the weekly, monthly will be correct after the first new month and yearly from January on.
 
 Supports:
 - Enphase Envoy local API
 - Enphase Cloud API
 - Fronius JSON API V1
 - Solar Edge Cloud API
+- SolarMan Cloud API (thanks to Octoplayer)
 - SUNGROW Power Cloud API
 - PV Output Cloud API
 
@@ -25,6 +26,14 @@ Parameters needed are:
 
 - Solar Edge Cloud API<br>
   API Key and System ID.
+  
+- SolarMan Cloud API<br>
+  Device ID and 'remember me' value. To get these values, logon to the solarman portal. Nesxt follow these steps:
+  - Log into the Solarman home.solarman.cn portal, I used Chrome, other browsers may do this differently... 
+  - Select the Details Tab and then select the Logger. On the Dev panel select the Network tab
+  - Press F5 or ctrl + R to refresh the page
+  - On the left of the panel should appear the 'goDetailAjax' set.
+  - Lookup and copy the deviceID and rememberMe values.
   
 - SUNGROW Power Cloud API<br>
   User ID and password.

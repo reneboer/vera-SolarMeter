@@ -1,8 +1,17 @@
 --[==[
   Module L_SolarMeter1.lua
   Written by R.Boer. 
-  V1.8 22 January 2019
 
+  V1.11 6 December 2019
+
+  V1.11 Changes:
+    - Fixes for Solarman monitoring 
+	- Overall fixes.
+	- Child device support for fronius
+  V1.10 Changes:
+    - Fixes for Solarman monitoring - Octoplayer & somersetdude
+  V1.9 Changes:
+    - Addition of Solarman monitoring - Octoplayer
   V1.8 Changes:
     - Fix for yearly calculations.
   V1.7 Changes:
@@ -42,14 +51,21 @@
 
 local socketLib = require("socket")  -- Required for logAPI module.
 local json = require("dkjson")
+local http = require("socket.http")
+local ltn12 = require("ltn12")
 
 local PlugIn = {
-  Version = "1.7",
+  Version = "1.10",
   DESCRIPTION = "Solar Meter", 
   SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
   EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
   ALTUI_SID = "urn:upnp-org:serviceId:altui1",
   THIS_DEVICE = 0,
+  HouseDevice = nil,
+  GridInDevice = nil,
+  GridOutDevice = nil,
+  BatteryInDevice = nil,
+  BatteryOutDevice = nil,
   Disabled = false,
   StartingUp = true,
   System = 0,
@@ -142,105 +158,127 @@ local function varAPI()
   }
 end
 
--- API to handle basic logging and debug messaging. V2.0, requires socketlib
+-- API to handle basic logging and debug messaging
 local function logAPI()
-local _LLError = 1
-local _LLWarning = 2
-local _LLInfo = 8
-local _LLDebug = 11
-local def_level = _LLError
+local def_level = 1
 local def_prefix = ''
 local def_debug = false
-local syslog
+local def_file = false
+local max_length = 100
+local onOpenLuup = false
+local taskHandle = -1
 
-  -- Syslog server support. From Netatmo plugin by akbooer
-  local function _init_syslog_server(ip_and_port, tag, hostname)
-    local sock = socketLib.udp()
-    local facility = 1    -- 'user'
---    local emergency, alert, critical, error, warning, notice, info, debug = 0,1,2,3,4,5,6,7
-    local ip, port = ip_and_port:match "^(%d+%.%d+%.%d+%.%d+):(%d+)$"
-    if not ip or not port then return nil, "invalid IP or PORT" end
-    local serialNo = luup.pk_accesspoint
-    hostname = ("Vera-"..serialNo) or "Vera"
-    if not tag or tag == '' then tag = def_prefix end
-    tag = tag:gsub("[^%w]","") or "No TAG"  -- only alphanumeric, no spaces or other
-    local function send (self, content, severity)
-      content  = tostring (content)
-      severity = tonumber (severity) or 6
-      local priority = facility*8 + (severity%8)
-      local msg = ("<%d>%s %s %s: %s\n"):format (priority, os.date "%b %d %H:%M:%S", hostname, tag, content)
-      sock:send(msg) 
-    end
-    local ok, err = sock:setpeername(ip, port)
-    if ok then ok = {send = send} end
-    return ok, err
-  end
+	local function _update(level)
+		if level > 100 then
+			def_file = true
+			def_debug = true
+			def_level = 10
+		elseif level > 10 then
+			def_debug = true
+			def_file = false
+			def_level = 10
+		else
+			def_file = false
+			def_debug = false
+			def_level = level
+		end
+	end	
 
-  local function _update(level)
-    if level > 10 then
-      def_debug = true
-      def_level = 10
-    else
-      def_debug = false
-      def_level = level
-    end
-  end  
+	local function _init(prefix, level,onol)
+		_update(level)
+		def_prefix = prefix
+		onOpenLuup = onol
+	end	
+	
+	-- Build loggin string safely up to given lenght. If only one string given, then do not format because of length limitations.
+	local function prot_format(ln,str,...)
+		local msg = ""
+		if arg[1] then 
+			_, msg = pcall(string.format, str, unpack(arg))
+		else 
+			msg = str or "no text"
+		end 
+		if ln > 0 then
+			return msg:sub(1,ln)
+		else
+			return msg
+		end	
+	end	
+	local function _log(...) 
+		if (def_level >= 10) then
+			luup.log(def_prefix .. ": " .. prot_format(max_length,...), 50) 
+		end	
+	end	
+	
+	local function _info(...) 
+		if (def_level >= 8) then
+			luup.log(def_prefix .. "_info: " .. prot_format(max_length,...), 8) 
+		end	
+	end	
 
-  local function _init(prefix, level)
-    _update(level)
-    def_prefix = prefix
-  end  
+	local function _warning(...) 
+		if (def_level >= 2) then
+			luup.log(def_prefix .. "_warning: " .. prot_format(max_length,...), 2) 
+		end	
+	end	
 
-  local function _set_syslog(sever)
-    if (sever ~= '') then
-      _log('Starting UDP syslog service...',7) 
-      local err
-      syslog, err = _init_syslog_server(server, def_prefix)
-      if (not syslog) then _log('UDP syslog service error: '..err,2) end
-    else
-      syslog = nil
-    end  
-  end
+	local function _error(...) 
+		if (def_level >= 1) then
+			luup.log(def_prefix .. "_error: " .. prot_format(max_length,...), 1) 
+		end	
+	end	
 
-  local function _log(text, level) 
-    local level = (level or 10)
-    local msg = (text or "no text")
-    if (def_level >= level) then
-      if (syslog) then
-        local slvl
-        if (level == 1) then slvl = 2 
-        elseif (level == 2) then slvl = 4 
-        elseif (level == 3) then slvl = 5 
-        elseif (level == 4) then slvl = 5 
-        elseif (level == 7) then slvl = 6 
-        elseif (level == 8) then slvl = 6 
-        else slvl = 7
-        end
-        syslog:send(msg,slvl) 
-      else
-        if (level == 10) then level = 50 end
-        luup.log(def_prefix .. ": " .. msg:sub(1,80), (level or 50)) 
-      end  
-    end  
-  end  
-  
-  local function _debug(text)
-    if def_debug then
-      luup.log(def_prefix .. "_debug: " .. (text or "no text"), 50) 
-    end  
-  end
-  
-  return {
-    Initialize = _init,
-    LLError = _LLError,
-    LLWarning = _LLWarning,
-    LLInfo = _LLInfo,
-    LLDebug = _LLDebug,
-    Update = _update,
-    SetSyslog = _set_syslog,
-    Log = _log,
-    Debug = _debug
-  }
+	local function _debug(...)
+		if def_debug then
+			luup.log(def_prefix .. "_debug: " .. prot_format(-1,...), 50) 
+		end	
+	end
+	
+	-- Write to file for detailed analisys
+	local function _logfile(...)
+		if def_file then
+			local fh = io.open("/tmp/harmony.log","a")
+			local msg = os.date("%d/%m/%Y %X") .. ": " .. prot_format(-1,...)
+			fh:write(msg)
+			fh:write("\n")
+			fh:close()
+		end	
+	end
+	
+	local function _devmessage(devID, isError, timeout, ...)
+		local message =  prot_format(60,...)
+		local status = isError and 2 or 4
+		-- Standard device message cannot be erased. Need to do a reload if message w/o timeout need to be removed. Rely on caller to trigger that.
+		if onOpenLuup then
+			taskHandle = luup.task(message, status, def_prefix, taskHandle)
+			if timeout ~= 0 then
+				luup.call_delay("logAPI_clearTask", timeout, "", false)
+			else
+				taskHandle = -1
+			end
+		else
+			luup.device_message(devID, status, message, timeout, def_prefix)
+		end	
+	end
+	
+	local function logAPI_clearTask()
+		luup.task("", 4, def_prefix, taskHandle)
+		taskHandle = -1
+	end
+	_G.logAPI_clearTask = logAPI_clearTask
+	
+	
+	return {
+		Initialize = _init,
+		Error = _error,
+		Warning = _warning,
+		Info = _info,
+		Log = _log,
+		Debug = _debug,
+		Update = _update,
+		LogFile = _logfile,
+		DeviceMessage = _devmessage
+	}
 end 
 
 -- API to handle some Util functions
@@ -332,12 +370,6 @@ local _OpenLuup = 99
     IsOpenLuup = _OpenLuup
   }
 end 
-
--- Get an attribute value, try to return as number value if applicable
-local function GetAsNumber(value)
-	local nv = tonumber(value,10)
-	return (nv or 0)
-end
 
 -- Initialize calculation array
 local function InitWeekTotal()
@@ -450,6 +482,60 @@ local function GetYearTotal(monthly)
 	end  
 end
 
+-- Find child based on having THIS_DEVICE as parent and the expected altID
+local function addMeterDevice(childDevices, meterType)
+	local meterName = "SMTR_"..meterType
+	local childName = "Solar Meter "..meterType
+	local init = ""
+	local sid = PlugIn.EM_SID
+
+	-- For Power meters, set initial values
+	init=sid .. ",ActualUsage=1\n" .. 
+		 sid .. ",Watts=0\n" .. 
+		 sid .. ",KWH=0\n" ..
+		 sid .. ",DayKWH=0\n" ..
+		 sid .. ",WeekKWH=0\n" ..
+		 sid .. ",MonthKWH=0\n" ..
+		 sid .. ",LifeKWH=0\n"
+	-- For whole house set WholeHouse flag
+	if (meterType == "House") then
+		init=init .. sid ..",WholeHouse=1\n"
+	end	
+	init=init .. "urn:micasaverde-com:serviceId:HaDevice1,HideDeleteButton=1"
+
+	-- Now add the new device to the tree
+	log.Log("Creating child device id %s (%s)", meterName, childName)
+	luup.chdev.append(
+		    	PlugIn.THIS_DEVICE, -- parent (this device)
+		    	childDevices, 		-- pointer from above "start" call
+		    	meterName,			-- child Alt ID
+		    	childName,			-- child device description 
+		    	"", 				-- serviceId (keep blank for UI7 restart avoidance)
+		    	"D_PowerMeter1.xml",-- device file for given device
+		    	"",					-- Implementation file
+		    	init,				-- parameters to set 
+		    	true)				-- not embedded child devices can go in any room
+end
+
+-- Create any child devices we may have
+local function SolarMeter_CreateChildren()
+	local childDevices = luup.chdev.start(PlugIn.THIS_DEVICE);  
+
+	if var.GetNumber("ShowBatteryChild") == 1 then
+		addMeterDevice(childDevices, "BatteryIn")
+		addMeterDevice(childDevices, "BatteryOut")
+	end
+	if var.GetNumber("ShowGridChild") == 1 then
+		addMeterDevice(childDevices, "GridIn")
+		addMeterDevice(childDevices, "GridOut")
+	end
+	if var.GetNumber("ShowHouseChild") == 1 then
+		addMeterDevice(childDevices, "House")
+	end
+	-- Vera will reload here when there are new devices or changes to a child
+	luup.chdev.sync(PlugIn.THIS_DEVICE, childDevices)
+end
+
 ------------------------------------------------------------------------------------------
 -- Init and Refresh functions for supported systems.                  --
 -- Init and Refresh to return true on success, false on faiure
@@ -460,7 +546,7 @@ function SS_EnphaseLocal_Init()
 	local ipa = var.Get("EN_IPAddress")
 	local ipAddress = string.match(ipa, '^(%d%d?%d?%.%d%d?%d?%.%d%d?%d?%.%d%d?%d?)')
 	if (ipAddress == nil) then 
-		log.Log("Enphase Local, missing IP address.",3)
+		log.Error("Enphase Local, missing IP address.")
 		return false
 	end
 	InitMonthTotal()
@@ -481,10 +567,10 @@ function SS_EnphaseLocal_Refresh()
 		log.Debug(dataRaw)
 		local retData = json.decode(dataRaw)
 		-- Set values in PowerMeter
-		watts = GetAsNumber(retData.wattsNow)
-		DayKWH = GetAsNumber(retData.wattHoursToday)/1000
-		WeekKWH = GetAsNumber(retData.wattHoursSevenDays)/1000
-		LifeKWH = GetAsNumber(retData.wattHoursLifetime)/1000
+		watts = var.GetNumber(retData.wattsNow)
+		DayKWH = var.GetNumber(retData.wattHoursToday)/1000
+		WeekKWH = var.GetNumber(retData.wattHoursSevenDays)/1000
+		LifeKWH = var.GetNumber(retData.wattHoursLifetime)/1000
 		MonthKWH = GetMonthTotal(DayKWH)
 		YearKWH = GetYearTotal(MonthKWH)
 		retData = nil 
@@ -505,7 +591,7 @@ function SS_EnphaseRemote_Init()
 	local sys = var.Get("EN_SystemID")
 
 	if key == "" or user == "" or sys == "" then
-		log.Log("Enphase Remote, missing configuration details.",3)
+		log.Error("Enphase Remote, missing configuration details.")
 		return false
 	end
 	InitWeekTotal()
@@ -528,9 +614,9 @@ function SS_EnphaseRemote_Refresh()
 		log.Debug(dataRaw)
 		local retData = json.decode(dataRaw)
 		-- Get standard values
-		watts = GetAsNumber(retData.current_power)
-		DayKWH = GetAsNumber(retData.energy_today)/1000
-		LifeKWH = GetAsNumber(retData.energy_lifetime)/1000
+		watts = var.GetNumber(retData.current_power)
+		DayKWH = var.GetNumber(retData.energy_today)/1000
+		LifeKWH = var.GetNumber(retData.energy_lifetime)/1000
 		WeekKWH = GetWeekTotal(DayKWH)
 		MonthKWH = GetMonthTotal(DayKWH)
 		YearKWH = GetYearTotal(MonthKWH)
@@ -556,7 +642,7 @@ function SS_FroniusAPI_Init()
 	local dev = var.Get("FA_DeviceID")
 	local ipAddress = string.match(ipa, '^(%d%d?%d?%.%d%d?%d?%.%d%d?%d?%.%d%d?%d?)')
 	if (ipAddress == nil or dev == "") then 
-		log.Log("Fronius API, missing configuration details.",3)
+		log.Error("Fronius API, missing configuration details.")
 		return false
 	end
 	InitWeekTotal()
@@ -584,10 +670,10 @@ function SS_FroniusAPI_Refresh()
 		-- Get standard values
 		retData = retData.Body.Data
 		if retData then
-			watts = GetAsNumber(retData.PAC.Value)
-			DayKWH = GetAsNumber(retData.DAY_ENERGY.Value) / 1000
-			YearKWH = GetAsNumber(retData.YEAR_ENERGY.Value) / 1000
-			LifeKWH = GetAsNumber(retData.TOTAL_ENERGY.Value) / 1000
+			watts = var.GetNumber(retData.PAC.Value)
+			DayKWH = var.GetNumber(retData.DAY_ENERGY.Value) / 1000
+			YearKWH = var.GetNumber(retData.YEAR_ENERGY.Value) / 1000
+			LifeKWH = var.GetNumber(retData.TOTAL_ENERGY.Value) / 1000
 			WeekKWH = GetWeekTotal(DayKWH)
 			MonthKWH = GetMonthTotal(DayKWH)
 			var.Set("Fronius_Status", retData.DeviceStatus.StatusCode)
@@ -599,6 +685,70 @@ function SS_FroniusAPI_Refresh()
 			if watts == var.GetNumber("Watts", PlugIn.EM_SID) and DayKWH == var.GetNumber("DayKWH", PlugIn.EM_SID) then
 				ts = var.GetNumber("LastRefresh", PlugIn.EM_SID)
 			end
+
+			-- Addition to read Power Meter values from Fronius  -- Octoplayer July 2019
+			URL = "http://%s//solar_api/v1/GetPowerFlowRealtimeData.fcgi"
+			URL = URL:format(ipa)
+			log.Debug("Fronius Power URL " .. URL)
+			retCode, dataRaw, HttpCode = luup.inet.wget(URL,15)
+			if (retCode == 0 and HttpCode == 200) then
+				log.Debug("Retrieve HTTP Get Power Complete...")
+				log.Debug(dataRaw)
+
+				-- Get Power values
+				local retData = json.decode(dataRaw)
+				retData = retData.Body.Data
+				if retData then
+					if retData.Site then
+						local value = retData.Site.P_Grid
+						if type(value) == "number" then
+							if value == 0 then
+								var.Set("GridWatts",0)
+								var.Set("GridStatus","Static")
+							elseif value < 0 then
+								var.Set("GridWatts",math.abs(value))
+								var.Set("GridStatus","Sell")
+							else
+								var.Set("GridWatts",value)
+								var.Set("GridStatus","Buy")
+							end
+						end	
+						local value = retData.Site.P_Akku
+						if type(value) == "number" then
+							if value == 0 then
+								var.Set("BatteryWatts",0)
+								var.Set("BatteryStatus","Static")
+							elseif value < 0 then
+								var.Set("BatteryWatts",math.abs(value))
+								var.Set("BatteryStatus","Charge")
+							else
+								var.Set("BatteryWatts",value)
+								var.Set("BatteryStatus","Discharge")
+							end
+						end	
+						local value = retData.Site.P_Akku
+						if type(value) == "number" then
+							if value == 0 then
+								var.Set("BatteryWatts",0)
+								var.Set("BatteryStatus","Static")
+							elseif value < 0 then
+								var.Set("BatteryWatts",math.abs(value))
+								var.Set("BatteryStatus","Charge")
+							else
+								var.Set("BatteryWatts",value)
+								var.Set("BatteryStatus","Discharge")
+							end
+						end	
+						local value = retData.Site.P_Load
+						if type(value) == "number" then
+							var.Set("HouseWatts",math.abs(value))
+						else	
+							var.Set("HouseWatts",0)
+						end	
+					end	
+					var.Set("BatterySOC", retData.Invertors[1].SOC)  -- may need different index, 
+				end
+			end
 			retData = nil 
 			return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
 		else
@@ -606,8 +756,9 @@ function SS_FroniusAPI_Refresh()
 		end
 	else
 		return false, HttpCode, "HTTP Get to "..URL.." failed."
-	end  
-end
+	end 
+
+ end
 
 -- Solar Edge. thanks to cmille34. http://forum.micasaverde.com/index.php/topic,39157.msg355189.html#msg355189
 function SS_SolarEdge_Init()
@@ -615,7 +766,7 @@ function SS_SolarEdge_Init()
 	local sys = var.Get("SE_SystemID")
 
 	if key == "" or sys == "" then
-		log.Log("Solar Edge, missing configuration details.",3)
+		log.Error("Solar Edge, missing configuration details.")
 		return false
 	end
 	InitWeekTotal()
@@ -639,12 +790,12 @@ function SS_SolarEdge_Refresh()
 		-- Get standard values
 		retData = retData.overview
 		if retData then
-			watts = GetAsNumber(retData.currentPower.power)
-			DayKWH = GetAsNumber(retData.lastDayData.energy)/1000
+			watts = var.GetNumber(retData.currentPower.power)
+			DayKWH = var.GetNumber(retData.lastDayData.energy)/1000
 			WeekKWH = GetWeekTotal(DayKWH)
-			MonthKWH = GetAsNumber(retData.lastMonthData.energy)/1000
-			YearKWH = GetAsNumber(retData.lastYearData.energy)/1000
-			LifeKWH = GetAsNumber(retData.lifeTimeData.energy)/1000
+			MonthKWH = var.GetNumber(retData.lastMonthData.energy)/1000
+			YearKWH = var.GetNumber(retData.lastYearData.energy)/1000
+			LifeKWH = var.GetNumber(retData.lifeTimeData.energy)/1000
 			local timefmt = "(%d+)-(%d+)-(%d+) (%d+):(%d+):(%d+)"
 			local yyyy,mm,dd,h,m,s = retData.lastUpdateTime:match(timefmt)
 			ts = os.time({day=dd,month=mm,year=yyyy,hour=h,min=m,sec=s})
@@ -666,7 +817,7 @@ function SS_SunGrow_Init()
 	local pwd = var.Get("SG_Password")
 
 	if uid == "" or pwd == "" then
-		log.Log("SUNGROW, missing configuration details.",3)
+		log.Error("SUNGROW, missing configuration details.")
 		return false
 	end
 	InitWeekTotal()
@@ -694,8 +845,8 @@ function SS_SunGrow_Refresh()
     
 		-- Get standard values
 		if retData then
-			watts = math.floor(GetAsNumber(retData.power) * 1000)
-			DayKWH = GetAsNumber(retData.todayEnergy)
+			watts = math.floor(var.GetNumber(retData.power) * 1000)
+			DayKWH = var.GetNumber(retData.todayEnergy)
 			WeekKWH = GetWeekTotal(DayKWH)
 			MonthKWH = GetMonthTotal(DayKWH)
 			YearKWH = GetYearTotal(MonthKWH)
@@ -713,14 +864,14 @@ function SS_SunGrow_Refresh()
 	end  
 end
 
--- For PV Output. Usefull when this plugin does not support your system
+-- For PV Output. Useful when this plugin does not support your system
 function SS_PVOutput_Init()
 	local key = var.Get("PV_APIKey")
 	local sys = var.Get("PV_SystemID")
 	var.Default("PV_HTTPS",0)
 
 	if key == "" or sys == "" then
-		log.Log("PV Output, missing configuration details.",3)
+		log.Error("PV Output, missing configuration details.")
 		return false
 	end
 	InitWeekTotal()
@@ -747,8 +898,8 @@ function SS_PVOutput_Refresh()
 		local d_t = {}
 		string.gsub(dataRaw,"(.-),", function(c) d_t[#d_t+1] = c end)
 		if #d_t > 3 then
-			watts = GetAsNumber(d_t[4])
-			DayKWH = GetAsNumber(d_t[3])/1000
+			watts = var.GetNumber(d_t[4])
+			DayKWH = var.GetNumber(d_t[3])/1000
 			WeekKWH = GetWeekTotal(DayKWH)
 			MonthKWH = GetMonthTotal(DayKWH)
 			YearKWH = GetYearTotal(MonthKWH)
@@ -771,6 +922,207 @@ function SS_PVOutput_Refresh()
 end
 
 ------------------------------------------------------------------------------------------
+-- For Solarman  --Octoplayer. Thanks to David H for advice on extracting the URLs
+
+-- As the Solarman open API is not well documented and there are no examples or support, 
+-- this is a workaround pulling the data direct from the portal page (screen scrape).
+-- It uses a long URL entered in the Control panel, to get this is a one-off process. 
+
+-- Log into the Solarman home.solarman.cn portal, I used Chrome, other browsers may do this differently... 
+-- Select the Details Tab and then select the Logger. On the Dev panel select the Network tab
+-- Press F5 or ctrl + R to refresh the page
+-- On the left of the panel should appear the 'goDetailAjax' set.
+-- right click on this - and select "copy as cURL for Bash"
+-- Paste this into the URL config box on Solar Meter.
+
+function SS_Solarman_Init()
+	local SMD= var.Get("SM_DeviceID")
+	local SMS= var.Get("SM_rememberMe")
+	if SMS== "" or SMD == "" then 
+		log.Error("Solarman, missing configuration details.")
+		return false
+	end
+	InitWeekTotal()
+	return true
+end
+
+function SS_Solarman_Refresh()
+	local ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = -1,-1,-1,-1,-1,-1,-1
+
+	local SMD= var.Get("SM_DeviceID")
+	local SMS= var.Get("SM_rememberMe")
+
+	
+	URL = "http://home.solarman.cn/cpro/device/inverter/goDetailAjax.json"
+	log.Debug("Solarman URL " .. URL)
+
+	local result = {}
+	local headers = {
+		['origin'] = 'http://home.solarman.cn',
+		['referer'] = 'http://home.solarman.cn/device/inverter/view.html?v=2.1.28&deviceId='..SMD,
+		['accept'] = 'application/json',
+		['accept-encoding'] = 'identity',
+		['content-type'] = 'application/x-www-form-urlencoded',
+		['connection'] = 'keep-alive',
+		['cookie'] = 'language=2; autoLogin=on; Language=en_US; rememberMe='..SMS
+	}	
+
+	local request_body = "deviceId=" .. SMD
+	headers["content-length"] = string.len(request_body)
+
+	local retCode,HttpCode = http.request{
+		url=URL, 
+		method='POST',
+		sink=ltn12.sink.table(result),
+		source = ltn12.source.string(request_body),
+		headers = headers
+	}
+	if (retCode ~= nil and HttpCode == 200) then
+		log.Debug("Retrieve HTTP Get Complete...")
+		local dataRaw = table.concat(result)
+		log.Debug(dataRaw)
+		local js_res = nil
+		if string.len(dataRaw) > 100 then
+			js_res = json.decode(dataRaw)
+			if js_res ~= nil then
+			  	local retData = js_res.result.deviceWapper
+				-- Solar Inverter Data
+				local volts, amps = 0,0
+				for key, value in pairs(retData.dataJSON) do
+					if key == "dt" then
+						ts = value / 1000
+					elseif key == "1ab" then 		-- DC Output Total Power (Active)
+						watts = tonumber(value)
+					elseif key == "1bd" then 		-- Daily Generation (Active)
+						DayKWH = tonumber(value)
+						WeekKWH = GetWeekTotal(DayKWH)
+					elseif key == "1be" then 	-- Monthly Generation (Active)
+						MonthKWH = tonumber(value)
+					elseif key == "1bf" then 	-- Annual Generation (Active)
+						YearKWH = tonumber(value)
+					elseif key == "1bc" then 	-- Total Generation (Active)
+						LifeKWH = tonumber(value)
+					elseif key == "1df" then 	-- Inverter Temperature
+						var.Set("InverterTemperature",tonumber(value))
+					elseif key == "1ez" then 	-- Inverter Status
+						var.Set("InverterStatus", value)
+					-- Battery data
+					elseif key == "1ff" then
+						local stat = tonumber(value)
+						if stat == 0 then
+							var.Set("BatteryStatus","Static")
+						elseif stat == 1 then
+							var.Set("BatteryStatus","Charge")
+						elseif stat == 2 then
+							var.Set("BatteryStatus","Discharge")
+						end
+					elseif key == "1cr" then 	
+						var.Set("BatteryVoltage",tonumber(value))
+					elseif key == "1cv" then 	
+						var.Set("BatteryRemainingCapacity",tonumber(value))
+					elseif key == "1cs" then 	
+						var.Set("BatteryCurrent",tonumber(value))
+					elseif key == "1ct" then 	
+						var.Set("BatteryWatts",tonumber(value))
+					elseif key == "1cz" then 	
+						var.Set("BatteryDayChargedKWH",tonumber(value))
+					elseif key == "1da" then 	
+						var.Set("BatteryDayDischargedKWH",tonumber(value))
+					elseif key == "xxx" then 	
+						var.Set("BatteryWeekChargedKWH",tonumber(value))
+					elseif key == "xxx" then 	
+						var.Set("BatteryWeekDischargedKWH",tonumber(value))
+					elseif key == "1db" then 	
+						var.Set("BatteryMonthChargedKWH",tonumber(value))
+					elseif key == "1dc" then 	
+						var.Set("BatteryMonthDischargedKWH",tonumber(value))
+					elseif key == "1dd" then 	
+						var.Set("BatteryYearChargedKWH",tonumber(value))
+					elseif key == "1de" then 	
+						var.Set("BatteryYearDischargedKWH",tonumber(value))
+					elseif key == "1cx" then 	
+						var.Set("BatteryLifeChargedKWH",tonumber(value))
+					elseif key == "1cy" then 	
+						var.Set("BatteryLifeDischargedKWH",tonumber(value))
+					-- Grid data  
+					elseif key == "1fe" then
+						local stat = tonumber(value)
+						if stat == 0 then
+							var.Set("GridStatus","Static")
+						elseif stat == 1 then
+							var.Set("GridStatus","Sell")
+						elseif stat == 2 then
+							var.Set("GridStatus","Buy")
+						end
+					elseif key == "1bq" then 
+						var.Set("GridWatts",tonumber(value))
+					elseif key == "1bx" then 	
+						var.Set("GridDayPurchasedKWH",tonumber(value))
+					elseif key == "1bw" then 	
+						var.Set("GridDayDeliveredKWH",tonumber(value))
+					elseif key == "xxx" then 	
+						var.Set("GridWeekDeliveredKWH",tonumber(value))
+					elseif key == "xxx" then 	
+						var.Set("GridWeekPurchasedKWH",tonumber(value))
+					elseif key == "1by" then 	
+						var.Set("GridMonthDeliveredKWH",tonumber(value))
+					elseif key == "1bz" then 	
+						var.Set("GridMonthPurchasedKWH",tonumber(value))
+					elseif key == "1cb" then 	
+						var.Set("GridYearPurchasedKWH",tonumber(value))
+					elseif key == "1ca" then 	
+						var.Set("GridYearDeliveredKWH",tonumber(value))
+					elseif key == "1bv" then 	
+						var.Set("GridLifePurchasedKWH",tonumber(value))
+					elseif key == "1bu" then 	
+						var.Set("GridLifeDeliveredKWH",tonumber(value))
+					-- House total data  
+					elseif key == "1cj" then 
+						var.Set("HouseWatts",tonumber(value))
+					elseif key == "1co" then 	
+						var.Set("HouseDayKWH",tonumber(value))
+					elseif key == "xxx" then 	
+						var.Set("HouseWeekKWH",tonumber(value))
+					elseif key == "1cp" then 	
+						var.Set("HouseMonthKWH",tonumber(value))
+					elseif key == "1cq" then 	
+						var.Set("HouseYearKWH",tonumber(value))
+					elseif key == "1cn" then 	
+						var.Set("HouseLifeKWH",tonumber(value))
+					end
+				end
+				retData = nil 
+				if watts == -1 then watts = 0 end	-- Not sure where to get it from, return zero rather than -1
+				return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
+			else
+				return false, HttpCode, "No valid data received."
+			end
+		else
+			return false, HttpCode, "No valid data received."
+		end
+	else
+		return false, HttpCode, "HTTP Get to "..URL.." failed."
+	end  
+
+--[[   
+			key = 0
+			repeat 
+				key = key + 1
+			until retData.realTimeDataTemp[key].name == "Battery Temperature" 
+			var.Set("BatteryTemp", tonumber(retData.realTimeDataTemp[key].value)) 
+			log.Debug("Key, Temp value = " .. key ..", ".. retData.realTimeDataTemp[key].value)
+
+			local tslu = os.difftime(os.time(), ts)
+			if tslu > 1800 then  -- no update for 30 min, so use watts to flag as offline. 
+				watts = -666
+			end
+			log.Debug("Time since last update = " .. tslu)
+
+]]	
+
+end
+
+------------------------------------------------------------------------------------------
 -- Start up plug in
 function SolarMeter_Init(lul_device)
 	PlugIn.THIS_DEVICE = lul_device
@@ -784,22 +1136,16 @@ function SolarMeter_Init(lul_device)
 	log.Initialize(PlugIn.DESCRIPTION, var.GetNumber("LogLevel"))
 	utils.Initialize()
   
-	log.Log("Starting version "..PlugIn.Version.." device: " .. tostring(PlugIn.THIS_DEVICE),3)
+	log.Info("Starting version %s device: %s", PlugIn.Version, tostring(PlugIn.THIS_DEVICE))
 	var.Set("Version", PlugIn.Version)
-	var.Default("ActualUsage", 1, PlugIn.EM_SID)
 
-	-- See if user disabled plug-in 
-	local isDisabled = luup.attr_get("disabled", PlugIn.THIS_DEVICE)
-	if ((isDisabled == 1) or (isDisabled == "1")) then
-		log.Log("Init: Plug-in version "..PlugIn.Version.." - DISABLED",2)
-		PlugIn.Disabled = true
-		var.Set("DisplayLine2", "Disabled. ", PlugIn.ALTUI_SID)
-		utils.SetLuupFailure(0, PlugIn.THIS_DEVICE)
-		return true
-	end
-	-- Read settings.
+	-- Create variables if needed.
+	var.Default("ActualUsage", 1, PlugIn.EM_SID)
 	var.Default("System", PlugIn.System)
 	var.Default("DayInterval", PlugIn.DInterval)
+	var.Default("ShowGridChild", 0)
+	var.Default("ShowHouseChild", 0)
+	var.Default("ShowBatteryChild", 0)
 	var.Default("Watts", 0, PlugIn.EM_SID)
 	var.Default("KWH", 0, PlugIn.EM_SID)
 	var.Default("DayKWH", 0, PlugIn.EM_SID)
@@ -811,8 +1157,19 @@ function SolarMeter_Init(lul_device)
 	-- Make sure icons are accessible when they should be. 
 	utils.CheckImages(PluginImages)
 
-	-- set up logging to syslog  
-	log.SetSyslog(var.Default("Syslog")) -- send to syslog if IP address and Port 'XXX.XX.XX.XXX:YYY' (default port 514)
+	-- Create any child devices
+	SolarMeter_CreateChildren()
+
+	-- See if user disabled plug-in 
+	local isDisabled = luup.attr_get("disabled", PlugIn.THIS_DEVICE)
+	if ((isDisabled == 1) or (isDisabled == "1")) then
+		log.Log("Init: Plug-in version "..PlugIn.Version.." - DISABLED",2)
+		PlugIn.Disabled = true
+		var.Set("DisplayLine2", "Disabled. ", PlugIn.ALTUI_SID)
+		-- Still create any child devices so we do not loose configurations.
+		utils.SetLuupFailure(0, PlugIn.THIS_DEVICE)
+		return true, "Plug-in disabled attribute set", PlugIn.DESCRIPTION
+	end
 
 	-- Put known systems routines in map, keep in sync with J_SolarMeter.js var solarSystem
 	addSolarSystem(1, SS_EnphaseLocal_Init, SS_EnphaseLocal_Refresh)
@@ -821,6 +1178,7 @@ function SolarMeter_Init(lul_device)
 	addSolarSystem(4, SS_PVOutput_Init, SS_PVOutput_Refresh)
 	addSolarSystem(5, SS_SunGrow_Init, SS_SunGrow_Refresh)
 	addSolarSystem(6, SS_FroniusAPI_Init, SS_FroniusAPI_Refresh)
+ 	addSolarSystem(7, SS_Solarman_Init, SS_Solarman_Refresh)
   
 	-- Run Init function for specific solar system
 	local solSystem = var.GetNumber("System")
@@ -831,26 +1189,48 @@ function SolarMeter_Init(lul_device)
 	if my_sys then
 		local ret, res = pcall(my_sys.init)
 		if not ret then
-			log.Log("Init failed "..(res or "unknown"),2)
+			log.Error("Init failed "..(res or "unknown"))
 			utils.SetLuupFailure(1, PlugIn.THIS_DEVICE)
 			return false, "Init routing failed.", PlugIn.DESCRIPTION
 		else
 			if res ~= true then
-				log.Log("Init failed",2)
+				log.Error("Init failed")
 				utils.SetLuupFailure(1, PlugIn.THIS_DEVICE)
 				return false, "Configure system parameters via Settings.", PlugIn.DESCRIPTION
 			end
 		end
 	else  
-		log.Log("No solar system selected ",2)
+		log.Error("No solar system selected ")
 		utils.SetLuupFailure(1, PlugIn.THIS_DEVICE)
 		return false, "Configure solar system via Settings.", PlugIn.DESCRIPTION
 	end
-  
+	
+	-- Find any child devices and get device ID's for updating
+  	for k, v in pairs(luup.devices) do
+		if tonumber(v.device_num_parent) == tonumber(PlugIn.THIS_DEVICE) then
+			if v.id == "SMTR_House" then
+				PlugIn.HouseDevice = k
+				log.Debug("House Child Device ID : %d", k)
+			elseif v.id == "SMTR_GridIn" then
+				PlugIn.GridInDevice = k
+				log.Debug("Grid In Child Device ID : %d", k)
+			elseif v.id == "SMTR_GridOut" then
+				PlugIn.GridOutDevice = k
+				log.Debug("Grid Out Child Device ID : %d", k)
+			elseif v.id == "SMTR_BatteryIn" then
+				PlugIn.BatteryInDevice = k
+				log.Debug("Battery In Child Device ID : %d", k)
+			elseif v.id == "SMTR_BatteryOut" then
+				PlugIn.BatteryOutDevice = k
+				log.Debug("Battery Out Child Device ID : %d", k)
+			end
+		end
+	end
+
 	luup.call_delay("SolarMeter_Refresh", 30)
 	log.Debug("SolarMeter has started...")
 	utils.SetLuupFailure(0, PlugIn.THIS_DEVICE)
-	return true
+	return true, "Start up complete", PlugIn.DESCRIPTION
 end
 
 -- Get values from solar system
@@ -858,21 +1238,6 @@ function SolarMeter_Refresh()
 	-- app's own memory usage in kB
 	local AppMemoryUsed =  math.floor(collectgarbage "count")
 	var.Set("AppMemoryUsed", AppMemoryUsed) 
-	-- Schedule next refresh
-	local interval = var.GetNumber("DayInterval")
-	-- Offset now so we poll once after sunset and current watts is zero.
-	local watts = var.GetNumber("Watts", PlugIn.EM_SID)
-	local now = os.time() -- - interval
-	if (watts == 0) and luup.is_night() then
-		interval = os.difftime(luup.sunrise()+10,now)
-		log.Debug("Is Night, restart polling just after sunrise in "..interval.." seconds.")
-		log.Debug("Sun set is at : "..os.date('%c', luup.sunset()))
-		log.Debug("Sun rise is at : "..os.date('%c', luup.sunrise()))  
-	else 
-		log.Debug("Is Day use Day delay Interval SolarMeter_Refresh --> "..interval)
-	end
-	luup.call_delay("SolarMeter_Refresh",interval)  
-	log.Debug("Next poll is at : "..os.date('%c', now + interval))
 
 	-- Get system configured
 	local solSystem = var.GetNumber("System")
@@ -885,13 +1250,13 @@ function SolarMeter_Refresh()
 		if ret == true then 
 			if res == true then
 				log.Debug("Current Power --> "..watts.." W")
-				log.Debug("KWH Today     --> "..DayKWH.." KWh")
-				log.Debug("KWH Week      --> "..WeekKWH.." KWh")
-				log.Debug("KWH Month     --> "..MonthKWH.." KWh")
-				log.Debug("KWH Year      --> "..YearKWH.." KWh")
-				log.Debug("KWH Lifetime  --> "..LifeKWH.." KWh")
+				log.Debug("KWH Today     --> "..DayKWH.." kWh")
+				log.Debug("KWH Week      --> "..WeekKWH.." kWh")
+				log.Debug("KWH Month     --> "..MonthKWH.." kWh")
+				log.Debug("KWH Year      --> "..YearKWH.." kWh")
+				log.Debug("KWH Lifetime  --> "..LifeKWH.." kWh")
 				-- Set values in PowerMeter
-				var.Set("Watts", watts, PlugIn.EM_SID)
+				if watts ~= -1 then var.Set("Watts", watts, PlugIn.EM_SID) end
 				if DayKWH ~= -1 then 
 					var.Set("KWH", math.floor(DayKWH), PlugIn.EM_SID)
 					var.Set("DayKWH", DayKWH, PlugIn.EM_SID) 
@@ -901,12 +1266,74 @@ function SolarMeter_Refresh()
 				if YearKWH ~= -1 then var.Set("YearKWH", YearKWH, PlugIn.EM_SID) end
 				if LifeKWH ~= -1 then var.Set("LifeKWH", LifeKWH, PlugIn.EM_SID) end
 				var.Set("LastRefresh", ts,  PlugIn.EM_SID)
-				var.Set("LastUpdate", os.date("%H:%M %d %b", ts))
+				var.Set("LastUpdate", os.date("%H:%M:%S %d", ts))
 				var.Set("HttpCode", "Ok")
 				local dl1 ="%d Watts"
-				local dl2 ="Day: %.3f  Last Upd: %s"
 				var.Set("DisplayLine1", dl1:format(watts), PlugIn.ALTUI_SID)
-				var.Set("DisplayLine2", dl2:format(DayKWH ,os.date("%H:%M", ts)), PlugIn.ALTUI_SID)
+				local dl2 ="Day: %.3f  Last Upd: %s"
+				var.Set("DisplayLine2", dl2:format(DayKWH, os.date("%H:%M", ts)), PlugIn.ALTUI_SID)
+				-- Update child devices
+				if PlugIn.HouseDevice then
+					var.Set("Watts", var.Get("HouseWatts"), PlugIn.EM_SID, PlugIn.HouseDevice)
+					var.Set("KWH", var.Get("HouseDayKWH"), PlugIn.EM_SID, PlugIn.HouseDevice)
+					var.Set("DayKWH", var.Get("HouseDayKWH"), PlugIn.EM_SID, PlugIn.HouseDevice)
+					var.Set("WeekKWH", var.Get("HouseWeekKWH"), PlugIn.EM_SID, PlugIn.HouseDevice)
+					var.Set("MonthKWH", var.Get("HouseMonthKWH"), PlugIn.EM_SID, PlugIn.HouseDevice)
+					var.Set("YearKWH", var.Get("HouseYearKWH"), PlugIn.EM_SID, PlugIn.HouseDevice)
+					var.Set("LifeKWH", var.Get("HouseLifeKWH"), PlugIn.EM_SID, PlugIn.HouseDevice)
+				end
+				if PlugIn.GridInDevice then
+					if var.Get("GridStatus") == "Buy" then
+						var.Set("Watts", math.abs(var.GetNumber("GridWatts")), PlugIn.EM_SID, PlugIn.GridInDevice)
+					else
+						var.Set("Watts", 0, PlugIn.EM_SID, PlugIn.GridInDevice)
+					end
+					var.Set("KWH", var.Get("GridDayPurchasedKWH"), PlugIn.EM_SID, PlugIn.GridInDevice)
+					var.Set("DayKWH", var.Get("GridDayPurchasedKWH"), PlugIn.EM_SID, PlugIn.GridInDevice)
+					var.Set("WeekKWH", var.Get("GridWeekPurchasedKWH"), PlugIn.EM_SID, PlugIn.GridInDevice)
+					var.Set("MonthKWH", var.Get("GridMonthPurchasedKWH"), PlugIn.EM_SID, PlugIn.GridInDevice)
+					var.Set("YearKWH", var.Get("GridYearPurchasedKWH"), PlugIn.EM_SID, PlugIn.GridInDevice)
+					var.Set("LifeKWH", var.Get("GridLifePurchasedKWH"), PlugIn.EM_SID, PlugIn.GridInDevice)
+				end
+				if PlugIn.GridOutDevice then
+					if var.Get("GridStatus") == "Sell" then
+						var.Set("Watts", math.abs(var.GetNumber("GridWatts")), PlugIn.EM_SID, PlugIn.GridOutDevice)
+					else
+						var.Set("Watts", 0, PlugIn.EM_SID, PlugIn.GridOutDevice)
+					end  
+					var.Set("KWH", var.Get("GridDayDeliveredKWH"), PlugIn.EM_SID, PlugIn.GridOutDevice)
+					var.Set("DayKWH", var.Get("GridDayDeliverdKWH"), PlugIn.EM_SID, PlugIn.GridOutDevice)
+					var.Set("WeekKWH", var.Get("GridWeekDeliveredKWH"), PlugIn.EM_SID, PlugIn.GridOutDevice)
+					var.Set("MonthKWH", var.Get("GridMonthDeliveredKWH"), PlugIn.EM_SID, PlugIn.GridOutDevice)
+					var.Set("YearKWH", var.Get("GridYearDeliveredKWH"), PlugIn.EM_SID, PlugIn.GridOutDevice)
+					var.Set("LifeKWH", var.Get("GridLifeDeliveredKWH"), PlugIn.EM_SID, PlugIn.GridOutDevice)
+				end
+				if PlugIn.BatteryInDevice then
+					if var.Get("BatteryStatus") == "Charge" then
+						var.Set("Watts", var.Get("BatteryWatts"), PlugIn.EM_SID, PlugIn.BatteryInDevice)
+					else
+						var.Set("Watts", 0, PlugIn.EM_SID, PlugIn.BatteryInDevice)
+					end
+					var.Set("KWH", var.Get("BatteryDayChargedKWH"), PlugIn.EM_SID, PlugIn.BatteryInDevice)
+					var.Set("DayKWH", var.Get("BatteryDayChargedKWH"), PlugIn.EM_SID, PlugIn.BatteryInDevice)
+					var.Set("WeekKWH", var.Get("BatteryWeekChargedKWH"), PlugIn.EM_SID, PlugIn.BatteryInDevice)
+					var.Set("MonthKWH", var.Get("BatteryMonthChargedKWH"), PlugIn.EM_SID, PlugIn.BatteryInDevice)
+					var.Set("YearKWH", var.Get("BatteryYearChargedKWH"), PlugIn.EM_SID, PlugIn.BatteryInDevice)
+					var.Set("LifeKWH", var.Get("BatteryLifeChargedKWH"), PlugIn.EM_SID, PlugIn.BatteryInDevice)
+				end
+				if PlugIn.BatteryOutDevice then
+					if var.Get("BatteryStatus") == "Discharge" then
+						var.Set("Watts", var.Get("BatteryWatts"), PlugIn.EM_SID, PlugIn.BatteryOutDevice)
+					else
+						var.Set("Watts", 0, PlugIn.EM_SID, PlugIn.BatteryOutDevice)
+					end
+					var.Set("KWH", var.Get("BatteryDayDischargedKWH"), PlugIn.EM_SID, PlugIn.BatteryOutDevice)
+					var.Set("DayKWH", var.Get("BatteryDayDischargedKWH"), PlugIn.EM_SID, PlugIn.BatteryOutDevice)
+					var.Set("WeekKWH", var.Get("BatteryWeekDischargedKWH"), PlugIn.EM_SID, PlugIn.BatteryOutDevice)
+					var.Set("MonthKWH", var.Get("BatteryMonthDischargedKWH"), PlugIn.EM_SID, PlugIn.BatteryOutDevice)
+					var.Set("YearKWH", var.Get("BatteryYearDischargedKWH"), PlugIn.EM_SID, PlugIn.BatteryOutDevice)
+					var.Set("LifeKWH", var.Get("BatteryLifeDischargedKWH"), PlugIn.EM_SID, PlugIn.BatteryOutDevice)
+				end
 			else
 				log.Log("Refresh failed "..(watts or "unknown"),2)
 				var.Set("HttpCode", ts)
@@ -917,4 +1344,31 @@ function SolarMeter_Refresh()
 			var.Set("HttpCode", 0)
 		end
 	end
+
+	-- Schedule next refresh  (moved to after data refresh so that next call can be scheduled depending on success of this one - Octoplayer)
+	local interval = var.GetNumber("DayInterval")
+	-- Offset now so we poll once after sunset and current watts is zero.
+	local watts = var.GetNumber("Watts", PlugIn.EM_SID)
+	local now = os.time() 
+
+	--if (watts == 0) and luup.is_night() then  -- replace with below
+	if (watts == 0) and luup.is_night() and solSystem ~= 7 then  -- Let Solarman query run through night for battery status etc.
+		interval = os.difftime(luup.sunrise() + 10, now)
+		log.Debug("Is Night, restart polling just after sunrise in "..interval.." seconds.")
+		log.Debug("Sun set is at : %s", os.date('%c', luup.sunset()))
+		log.Debug("Sun rise is at : %s", os.date('%c', luup.sunrise()))  
+	else 
+		interval = os.difftime(var.GetNumber("LastRefresh", PlugIn.EM_SID) + interval + 30, now) -- Line added to sync with updates, note that Solarman seems to update at 3-6min intervals. Octoplayer
+		log.Debug("It's Daytime or Solarman: use modified Day delay Interval SolarMeter_Refresh --> ".. interval)
+	end
+	if interval <= 30 then -- update was late so dont try again too soon
+		interval = 60
+		log.Debug("Update was late, try again in " .. interval)
+	end
+	log.Debug("Interval to SolarMeter_Refresh --> "..interval)
+	luup.call_delay("SolarMeter_Refresh", interval) 
+	log.Debug("Last Refresh was : " .. os.date('%c', var.GetNumber("LastRefresh", PlugIn.EM_SID)))
+	log.Debug("Next poll is at : "..os.date('%c', now + interval))
+
+
 end
