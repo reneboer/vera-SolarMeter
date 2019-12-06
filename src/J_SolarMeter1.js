@@ -1,7 +1,10 @@
 //# sourceURL=J_SolarMeter.js
 // SmartMeter control UI for UI7 and ALTUI
 // Written by R.Boer. 
-// V1.9 4 September 2019
+// V1.11 6 December 2019
+//
+// V1.11 Changes:
+//		Child device support for Fronius
 //
 // V1.9 Changes:
 //		SolarMan support
@@ -88,6 +91,9 @@ var SolarMeter = (function (api) {
 				'<div id="'+DIV_PREFIX+deviceID+'div_system6" style="display: '+((curSystem === '6')?'block':'none')+';" >'+
 				htmlAddInput(deviceID, 'Fronius IP Address', 50, 'FA_IPAddress')+
 				htmlAddPulldown(deviceID, 'Fronius Device ID', 'FA_DeviceID', fronDev)+
+				htmlAddPulldown(deviceID, 'Show House Power meter', 'ShowHouseChild', yesNo)+
+				htmlAddPulldown(deviceID, 'Show Grid Power meters', 'ShowGridChild', yesNo)+
+				htmlAddPulldown(deviceID, 'Show Battery Power meters', 'ShowBatteryChild', yesNo)+
 				'</div>'+
 				'<div id="'+DIV_PREFIX+deviceID+'div_system7" style="display: '+((curSystem === '7')?'block':'none')+';" >'+
 				htmlAddInput(deviceID, 'Solarman Device ID', 20, 'SM_DeviceID')+

@@ -2,8 +2,12 @@
   Module L_SolarMeter1.lua
   Written by R.Boer. 
 
-  V1.10 26 November 2019
+  V1.11 6 December 2019
 
+  V1.11 Changes:
+    - Fixes for Solarman monitoring 
+	- Overall fixes.
+	- Child device support for fronius
   V1.10 Changes:
     - Fixes for Solarman monitoring - Octoplayer & somersetdude
   V1.9 Changes:
@@ -525,7 +529,7 @@ local function SolarMeter_CreateChildren()
 		addMeterDevice(childDevices, "GridIn")
 		addMeterDevice(childDevices, "GridOut")
 	end
-	if var.GetNumber("ShowBatteryChild") == 1 then
+	if var.GetNumber("ShowHouseChild") == 1 then
 		addMeterDevice(childDevices, "House")
 	end
 	-- Vera will reload here when there are new devices or changes to a child
@@ -695,9 +699,53 @@ function SS_FroniusAPI_Refresh()
 				local retData = json.decode(dataRaw)
 				retData = retData.Body.Data
 				if retData then
-					var.Set("ToBatt", retData.Site.P_Akku)
-					var.Set("ToGrid", -retData.Site.P_Grid)  -- NOTE: changed signs to match my Solarman display (bigger = better, therefore export TO grid is good, -- Octo)
-					var.Set("ToHouse", -retData.Site.P_Load)  -- The house always _consumes_ energy, so may as well have all values positive
+					if retData.Site then
+						local value = retData.Site.P_Grid
+						if type(value) == "number" then
+							if value == 0 then
+								var.Set("GridWatts",0)
+								var.Set("GridStatus","Static")
+							elseif value < 0 then
+								var.Set("GridWatts",math.abs(value))
+								var.Set("GridStatus","Sell")
+							else
+								var.Set("GridWatts",value)
+								var.Set("GridStatus","Buy")
+							end
+						end	
+						local value = retData.Site.P_Akku
+						if type(value) == "number" then
+							if value == 0 then
+								var.Set("BatteryWatts",0)
+								var.Set("BatteryStatus","Static")
+							elseif value < 0 then
+								var.Set("BatteryWatts",math.abs(value))
+								var.Set("BatteryStatus","Charge")
+							else
+								var.Set("BatteryWatts",value)
+								var.Set("BatteryStatus","Discharge")
+							end
+						end	
+						local value = retData.Site.P_Akku
+						if type(value) == "number" then
+							if value == 0 then
+								var.Set("BatteryWatts",0)
+								var.Set("BatteryStatus","Static")
+							elseif value < 0 then
+								var.Set("BatteryWatts",math.abs(value))
+								var.Set("BatteryStatus","Charge")
+							else
+								var.Set("BatteryWatts",value)
+								var.Set("BatteryStatus","Discharge")
+							end
+						end	
+						local value = retData.Site.P_Load
+						if type(value) == "number" then
+							var.Set("HouseWatts",math.abs(value))
+						else	
+							var.Set("HouseWatts",0)
+						end	
+					end	
 					var.Set("BatterySOC", retData.Invertors[1].SOC)  -- may need different index, 
 				end
 			end
@@ -959,8 +1007,15 @@ function SS_Solarman_Refresh()
 					elseif key == "1ez" then 	-- Inverter Status
 						var.Set("InverterStatus", value)
 					-- Battery data
-					elseif key == "1ff" then 
-						var.Set("BatteryStatus",value)
+					elseif key == "1ff" then
+						local stat = tonumber(value)
+						if stat == 0 then
+							var.Set("BatteryStatus","Static")
+						elseif stat == 1 then
+							var.Set("BatteryStatus","Charge")
+						elseif stat == 2 then
+							var.Set("BatteryStatus","Discharge")
+						end
 					elseif key == "1cr" then 	
 						var.Set("BatteryVoltage",tonumber(value))
 					elseif key == "1cv" then 	
@@ -990,8 +1045,15 @@ function SS_Solarman_Refresh()
 					elseif key == "1cy" then 	
 						var.Set("BatteryLifeDischargedKWH",tonumber(value))
 					-- Grid data  
-					elseif key == "1fe" then 
-						var.Set("GridStatus",value)
+					elseif key == "1fe" then
+						local stat = tonumber(value)
+						if stat == 0 then
+							var.Set("GridStatus","Static")
+						elseif stat == 1 then
+							var.Set("GridStatus","Sell")
+						elseif stat == 2 then
+							var.Set("GridStatus","Buy")
+						end
 					elseif key == "1bq" then 
 						var.Set("GridWatts",tonumber(value))
 					elseif key == "1bx" then 	
@@ -1221,10 +1283,10 @@ function SolarMeter_Refresh()
 					var.Set("LifeKWH", var.Get("HouseLifeKWH"), PlugIn.EM_SID, PlugIn.HouseDevice)
 				end
 				if PlugIn.GridInDevice then
-					if var.Get("GridStatus") == "Grid" then
-						var.Set("Watts", var.Get("GridWatts"), PlugIn.EM_SID, PlugIn.GridInDevice)
+					if var.Get("GridStatus") == "Buy" then
+						var.Set("Watts", math.abs(var.GetNumber("GridWatts")), PlugIn.EM_SID, PlugIn.GridInDevice)
 					else
-						var.Set("Watts", 0)
+						var.Set("Watts", 0, PlugIn.EM_SID, PlugIn.GridInDevice)
 					end
 					var.Set("KWH", var.Get("GridDayPurchasedKWH"), PlugIn.EM_SID, PlugIn.GridInDevice)
 					var.Set("DayKWH", var.Get("GridDayPurchasedKWH"), PlugIn.EM_SID, PlugIn.GridInDevice)
@@ -1234,12 +1296,11 @@ function SolarMeter_Refresh()
 					var.Set("LifeKWH", var.Get("GridLifePurchasedKWH"), PlugIn.EM_SID, PlugIn.GridInDevice)
 				end
 				if PlugIn.GridOutDevice then
-					if var.Get("GridStatus") ~= "Grid" then
-						var.Set("Watts", var.Get("GridWatts"), PlugIn.EM_SID, PlugIn.GridOutDevice)
+					if var.Get("GridStatus") == "Sell" then
+						var.Set("Watts", math.abs(var.GetNumber("GridWatts")), PlugIn.EM_SID, PlugIn.GridOutDevice)
 					else
-						var.Set("Watts", 0)
+						var.Set("Watts", 0, PlugIn.EM_SID, PlugIn.GridOutDevice)
 					end  
-					var.Set("Watts", var.Get("GridWatts"), PlugIn.EM_SID, PlugIn.GridOutDevice)
 					var.Set("KWH", var.Get("GridDayDeliveredKWH"), PlugIn.EM_SID, PlugIn.GridOutDevice)
 					var.Set("DayKWH", var.Get("GridDayDeliverdKWH"), PlugIn.EM_SID, PlugIn.GridOutDevice)
 					var.Set("WeekKWH", var.Get("GridWeekDeliveredKWH"), PlugIn.EM_SID, PlugIn.GridOutDevice)
@@ -1248,10 +1309,10 @@ function SolarMeter_Refresh()
 					var.Set("LifeKWH", var.Get("GridLifeDeliveredKWH"), PlugIn.EM_SID, PlugIn.GridOutDevice)
 				end
 				if PlugIn.BatteryInDevice then
-					if var.Get("BatteryStatus") == "Charging" then
+					if var.Get("BatteryStatus") == "Charge" then
 						var.Set("Watts", var.Get("BatteryWatts"), PlugIn.EM_SID, PlugIn.BatteryInDevice)
 					else
-						var.Set("Watts", 0)
+						var.Set("Watts", 0, PlugIn.EM_SID, PlugIn.BatteryInDevice)
 					end
 					var.Set("KWH", var.Get("BatteryDayChargedKWH"), PlugIn.EM_SID, PlugIn.BatteryInDevice)
 					var.Set("DayKWH", var.Get("BatteryDayChargedKWH"), PlugIn.EM_SID, PlugIn.BatteryInDevice)
@@ -1261,10 +1322,10 @@ function SolarMeter_Refresh()
 					var.Set("LifeKWH", var.Get("BatteryLifeChargedKWH"), PlugIn.EM_SID, PlugIn.BatteryInDevice)
 				end
 				if PlugIn.BatteryOutDevice then
-					if var.Get("BatteryStatus") == "Discharging" then
+					if var.Get("BatteryStatus") == "Discharge" then
 						var.Set("Watts", var.Get("BatteryWatts"), PlugIn.EM_SID, PlugIn.BatteryOutDevice)
 					else
-						var.Set("Watts", 0)
+						var.Set("Watts", 0, PlugIn.EM_SID, PlugIn.BatteryOutDevice)
 					end
 					var.Set("KWH", var.Get("BatteryDayDischargedKWH"), PlugIn.EM_SID, PlugIn.BatteryOutDevice)
 					var.Set("DayKWH", var.Get("BatteryDayDischargedKWH"), PlugIn.EM_SID, PlugIn.BatteryOutDevice)
