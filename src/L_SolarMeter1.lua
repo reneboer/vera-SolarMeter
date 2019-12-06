@@ -1310,7 +1310,7 @@ function SolarMeter_Refresh()
 				end
 				if PlugIn.BatteryInDevice then
 					if var.Get("BatteryStatus") == "Charge" then
-						var.Set("Watts", var.Get("BatteryWatts"), PlugIn.EM_SID, PlugIn.BatteryInDevice)
+						var.Set("Watts", math.abs(var.Get("BatteryWatts")), PlugIn.EM_SID, PlugIn.BatteryInDevice)
 					else
 						var.Set("Watts", 0, PlugIn.EM_SID, PlugIn.BatteryInDevice)
 					end
@@ -1323,7 +1323,7 @@ function SolarMeter_Refresh()
 				end
 				if PlugIn.BatteryOutDevice then
 					if var.Get("BatteryStatus") == "Discharge" then
-						var.Set("Watts", var.Get("BatteryWatts"), PlugIn.EM_SID, PlugIn.BatteryOutDevice)
+						var.Set("Watts", math.abs(var.Get("BatteryWatts")), PlugIn.EM_SID, PlugIn.BatteryOutDevice)
 					else
 						var.Set("Watts", 0, PlugIn.EM_SID, PlugIn.BatteryOutDevice)
 					end
