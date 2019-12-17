@@ -2,8 +2,11 @@
   Module L_SolarMeter1.lua
   Written by R.Boer. 
 
-  V1.11 6 December 2019
+  V1.12 17 December 2019
 
+  V1.12 Changes:
+	- Icon file removed as that comes from github repository
+	- Fix for all converters retuning zero values
   V1.11 Changes:
     - Fixes for Solarman monitoring 
 	- Overall fixes.
@@ -55,7 +58,7 @@ local http = require("socket.http")
 local ltn12 = require("ltn12")
 
 local PlugIn = {
-  Version = "1.10",
+  Version = "1.12",
   DESCRIPTION = "Solar Meter", 
   SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
   EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
@@ -75,7 +78,6 @@ local PlugIn = {
   thisMonthDaily = nil,
   thisYearMonthy = nil
 }
-local PluginImages = { 'SolarMeter1' }
 
 -- To map solar systems. Must be in sync with var solarSystem in J_SolarMeter1.js
 local SolarSystems = {}
@@ -320,27 +322,6 @@ local _OpenLuup = 99
     end
   end
   
-  -- Create links for UI6 or UI7 image locations if missing.
-  local function _check_images(imageTable)
-    local imagePath =""
-    local sourcePath = "/www/cmh/skins/default/icons/"
-    if (luup.version_major >= 7) then
-      imagePath = "/www/cmh/skins/default/img/devices/device_states/"
-    elseif (luup.version_major == 6) then
-      imagePath = "/www/cmh_ui6/skins/default/icons/"
-    else
-      -- Default if for UI5, no idea what applies to older versions
-      imagePath = "/www/cmh/skins/default/icons/"
-    end
-    if (imagePath ~= sourcePath) then
-      for i = 1, #imageTable do
-        local source = sourcePath..imageTable[i]..".png"
-        local target = imagePath..imageTable[i]..".png"
-        os.execute(("[ ! -e %s ] && ln -s %s %s"):format(target, source, target))
-      end
-    end  
-  end
-  
   function _split(source, delimiters)
     local del = delimiters or ","
     local elements = {}
@@ -357,7 +338,6 @@ local _OpenLuup = 99
   return {
     Initialize = _init,
     ReloadLuup = _luup_reload,
-    CheckImages = _check_images,
     GetMemoryUsed = _getmemoryused,
     SetLuupFailure = _setluupfailure,
     Split = _split,
@@ -370,6 +350,12 @@ local _OpenLuup = 99
     IsOpenLuup = _OpenLuup
   }
 end 
+
+-- Get an attribute value, try to return as number value if applicable
+local function GetAsNumber(value)
+	local nv = tonumber(value,10)
+	return (nv or 0)
+end
 
 -- Initialize calculation array
 local function InitWeekTotal()
@@ -567,16 +553,17 @@ function SS_EnphaseLocal_Refresh()
 		log.Debug(dataRaw)
 		local retData = json.decode(dataRaw)
 		-- Set values in PowerMeter
-		watts = var.GetNumber(retData.wattsNow)
-		DayKWH = var.GetNumber(retData.wattHoursToday)/1000
-		WeekKWH = var.GetNumber(retData.wattHoursSevenDays)/1000
-		LifeKWH = var.GetNumber(retData.wattHoursLifetime)/1000
+		watts = GetAsNumber(retData.wattsNow)
+		DayKWH = GetAsNumber(retData.wattHoursToday)/1000
+		WeekKWH = GetAsNumber(retData.wattHoursSevenDays)/1000
+		LifeKWH = GetAsNumber(retData.wattHoursLifetime)/1000
 		MonthKWH = GetMonthTotal(DayKWH)
 		YearKWH = GetYearTotal(MonthKWH)
 		retData = nil 
 		-- Only update time stamp if watts or DayKWH are changed.
 		if watts == var.GetNumber("Watts", PlugIn.EM_SID) and DayKWH == var.GetNumber("DayKWH", PlugIn.EM_SID) then
 			ts = var.GetNumber("LastRefresh", PlugIn.EM_SID)
+			if ts == 0 then ts = os.time() end  -- First readout.
 		end
 		return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
 	else
@@ -614,9 +601,9 @@ function SS_EnphaseRemote_Refresh()
 		log.Debug(dataRaw)
 		local retData = json.decode(dataRaw)
 		-- Get standard values
-		watts = var.GetNumber(retData.current_power)
-		DayKWH = var.GetNumber(retData.energy_today)/1000
-		LifeKWH = var.GetNumber(retData.energy_lifetime)/1000
+		watts = GetAsNumber(retData.current_power)
+		DayKWH = GetAsNumber(retData.energy_today)/1000
+		LifeKWH = GetAsNumber(retData.energy_lifetime)/1000
 		WeekKWH = GetWeekTotal(DayKWH)
 		MonthKWH = GetMonthTotal(DayKWH)
 		YearKWH = GetYearTotal(MonthKWH)
@@ -670,10 +657,10 @@ function SS_FroniusAPI_Refresh()
 		-- Get standard values
 		retData = retData.Body.Data
 		if retData then
-			watts = var.GetNumber(retData.PAC.Value)
-			DayKWH = var.GetNumber(retData.DAY_ENERGY.Value) / 1000
-			YearKWH = var.GetNumber(retData.YEAR_ENERGY.Value) / 1000
-			LifeKWH = var.GetNumber(retData.TOTAL_ENERGY.Value) / 1000
+			watts = GetAsNumber(retData.PAC.Value)
+			DayKWH = GetAsNumber(retData.DAY_ENERGY.Value) / 1000
+			YearKWH = GetAsNumber(retData.YEAR_ENERGY.Value) / 1000
+			LifeKWH = GetAsNumber(retData.TOTAL_ENERGY.Value) / 1000
 			WeekKWH = GetWeekTotal(DayKWH)
 			MonthKWH = GetMonthTotal(DayKWH)
 			var.Set("Fronius_Status", retData.DeviceStatus.StatusCode)
@@ -790,12 +777,12 @@ function SS_SolarEdge_Refresh()
 		-- Get standard values
 		retData = retData.overview
 		if retData then
-			watts = var.GetNumber(retData.currentPower.power)
-			DayKWH = var.GetNumber(retData.lastDayData.energy)/1000
+			watts = GetAsNumber(retData.currentPower.power)
+			DayKWH = GetAsNumber(retData.lastDayData.energy)/1000
 			WeekKWH = GetWeekTotal(DayKWH)
-			MonthKWH = var.GetNumber(retData.lastMonthData.energy)/1000
-			YearKWH = var.GetNumber(retData.lastYearData.energy)/1000
-			LifeKWH = var.GetNumber(retData.lifeTimeData.energy)/1000
+			MonthKWH = GetAsNumber(retData.lastMonthData.energy)/1000
+			YearKWH = GetAsNumber(retData.lastYearData.energy)/1000
+			LifeKWH = GetAsNumber(retData.lifeTimeData.energy)/1000
 			local timefmt = "(%d+)-(%d+)-(%d+) (%d+):(%d+):(%d+)"
 			local yyyy,mm,dd,h,m,s = retData.lastUpdateTime:match(timefmt)
 			ts = os.time({day=dd,month=mm,year=yyyy,hour=h,min=m,sec=s})
@@ -845,14 +832,15 @@ function SS_SunGrow_Refresh()
     
 		-- Get standard values
 		if retData then
-			watts = math.floor(var.GetNumber(retData.power) * 1000)
-			DayKWH = var.GetNumber(retData.todayEnergy)
+			watts = math.floor(GetAsNumber(retData.power) * 1000)
+			DayKWH = GetAsNumber(retData.todayEnergy)
 			WeekKWH = GetWeekTotal(DayKWH)
 			MonthKWH = GetMonthTotal(DayKWH)
 			YearKWH = GetYearTotal(MonthKWH)
 			-- Only update time stamp if watts are updated.
 			if watts == var.GetNumber("Watts", PlugIn.EM_SID) then
 				ts = var.GetNumber("LastRefresh", PlugIn.EM_SID)
+				if ts == 0 then ts = os.time() end
 			end
 			retData = nil 
 			return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
@@ -898,8 +886,8 @@ function SS_PVOutput_Refresh()
 		local d_t = {}
 		string.gsub(dataRaw,"(.-),", function(c) d_t[#d_t+1] = c end)
 		if #d_t > 3 then
-			watts = var.GetNumber(d_t[4])
-			DayKWH = var.GetNumber(d_t[3])/1000
+			watts = GetAsNumber(d_t[4])
+			DayKWH = GetAsNumber(d_t[3])/1000
 			WeekKWH = GetWeekTotal(DayKWH)
 			MonthKWH = GetMonthTotal(DayKWH)
 			YearKWH = GetYearTotal(MonthKWH)
@@ -990,25 +978,25 @@ function SS_Solarman_Refresh()
 				local volts, amps = 0,0
 				for key, value in pairs(retData.dataJSON) do
 					if key == "dt" then
-						ts = value / 1000
+						ts = GetAsNumber(value) / 1000
 					elseif key == "1ab" then 		-- DC Output Total Power (Active)
-						watts = tonumber(value)
+						watts = GetAsNumber(value)
 					elseif key == "1bd" then 		-- Daily Generation (Active)
-						DayKWH = tonumber(value)
+						DayKWH = GetAsNumber(value)
 						WeekKWH = GetWeekTotal(DayKWH)
 					elseif key == "1be" then 	-- Monthly Generation (Active)
-						MonthKWH = tonumber(value)
+						MonthKWH = GetAsNumber(value)
 					elseif key == "1bf" then 	-- Annual Generation (Active)
-						YearKWH = tonumber(value)
+						YearKWH = GetAsNumber(value)
 					elseif key == "1bc" then 	-- Total Generation (Active)
-						LifeKWH = tonumber(value)
+						LifeKWH = GetAsNumber(value)
 					elseif key == "1df" then 	-- Inverter Temperature
-						var.Set("InverterTemperature",tonumber(value))
+						var.Set("InverterTemperature",GetAsNumber(value))
 					elseif key == "1ez" then 	-- Inverter Status
 						var.Set("InverterStatus", value)
 					-- Battery data
 					elseif key == "1ff" then
-						local stat = tonumber(value)
+						local stat = GetAsNumber(value)
 						if stat == 0 then
 							var.Set("BatteryStatus","Static")
 						elseif stat == 1 then
@@ -1017,36 +1005,36 @@ function SS_Solarman_Refresh()
 							var.Set("BatteryStatus","Discharge")
 						end
 					elseif key == "1cr" then 	
-						var.Set("BatteryVoltage",tonumber(value))
+						var.Set("BatteryVoltage",GetAsNumber(value))
 					elseif key == "1cv" then 	
-						var.Set("BatteryRemainingCapacity",tonumber(value))
+						var.Set("BatteryRemainingCapacity",GetAsNumber(value))
 					elseif key == "1cs" then 	
-						var.Set("BatteryCurrent",tonumber(value))
+						var.Set("BatteryCurrent",GetAsNumber(value))
 					elseif key == "1ct" then 	
-						var.Set("BatteryWatts",tonumber(value))
+						var.Set("BatteryWatts",GetAsNumber(value))
 					elseif key == "1cz" then 	
-						var.Set("BatteryDayChargedKWH",tonumber(value))
+						var.Set("BatteryDayChargedKWH",GetAsNumber(value))
 					elseif key == "1da" then 	
-						var.Set("BatteryDayDischargedKWH",tonumber(value))
+						var.Set("BatteryDayDischargedKWH",GetAsNumber(value))
 					elseif key == "xxx" then 	
-						var.Set("BatteryWeekChargedKWH",tonumber(value))
+						var.Set("BatteryWeekChargedKWH",GetAsNumber(value))
 					elseif key == "xxx" then 	
-						var.Set("BatteryWeekDischargedKWH",tonumber(value))
+						var.Set("BatteryWeekDischargedKWH",GetAsNumber(value))
 					elseif key == "1db" then 	
-						var.Set("BatteryMonthChargedKWH",tonumber(value))
+						var.Set("BatteryMonthChargedKWH",GetAsNumber(value))
 					elseif key == "1dc" then 	
-						var.Set("BatteryMonthDischargedKWH",tonumber(value))
+						var.Set("BatteryMonthDischargedKWH",GetAsNumber(value))
 					elseif key == "1dd" then 	
-						var.Set("BatteryYearChargedKWH",tonumber(value))
+						var.Set("BatteryYearChargedKWH",GetAsNumber(value))
 					elseif key == "1de" then 	
-						var.Set("BatteryYearDischargedKWH",tonumber(value))
+						var.Set("BatteryYearDischargedKWH",GetAsNumber(value))
 					elseif key == "1cx" then 	
-						var.Set("BatteryLifeChargedKWH",tonumber(value))
+						var.Set("BatteryLifeChargedKWH",GetAsNumber(value))
 					elseif key == "1cy" then 	
-						var.Set("BatteryLifeDischargedKWH",tonumber(value))
+						var.Set("BatteryLifeDischargedKWH",GetAsNumber(value))
 					-- Grid data  
 					elseif key == "1fe" then
-						local stat = tonumber(value)
+						local stat = GetAsNumber(value)
 						if stat == 0 then
 							var.Set("GridStatus","Static")
 						elseif stat == 1 then
@@ -1055,40 +1043,40 @@ function SS_Solarman_Refresh()
 							var.Set("GridStatus","Buy")
 						end
 					elseif key == "1bq" then 
-						var.Set("GridWatts",tonumber(value))
+						var.Set("GridWatts",GetAsNumber(value))
 					elseif key == "1bx" then 	
-						var.Set("GridDayPurchasedKWH",tonumber(value))
+						var.Set("GridDayPurchasedKWH",GetAsNumber(value))
 					elseif key == "1bw" then 	
-						var.Set("GridDayDeliveredKWH",tonumber(value))
+						var.Set("GridDayDeliveredKWH",GetAsNumber(value))
 					elseif key == "xxx" then 	
-						var.Set("GridWeekDeliveredKWH",tonumber(value))
+						var.Set("GridWeekDeliveredKWH",GetAsNumber(value))
 					elseif key == "xxx" then 	
-						var.Set("GridWeekPurchasedKWH",tonumber(value))
+						var.Set("GridWeekPurchasedKWH",GetAsNumber(value))
 					elseif key == "1by" then 	
-						var.Set("GridMonthDeliveredKWH",tonumber(value))
+						var.Set("GridMonthDeliveredKWH",GetAsNumber(value))
 					elseif key == "1bz" then 	
-						var.Set("GridMonthPurchasedKWH",tonumber(value))
+						var.Set("GridMonthPurchasedKWH",GetAsNumber(value))
 					elseif key == "1cb" then 	
-						var.Set("GridYearPurchasedKWH",tonumber(value))
+						var.Set("GridYearPurchasedKWH",GetAsNumber(value))
 					elseif key == "1ca" then 	
-						var.Set("GridYearDeliveredKWH",tonumber(value))
+						var.Set("GridYearDeliveredKWH",GetAsNumber(value))
 					elseif key == "1bv" then 	
-						var.Set("GridLifePurchasedKWH",tonumber(value))
+						var.Set("GridLifePurchasedKWH",GetAsNumber(value))
 					elseif key == "1bu" then 	
-						var.Set("GridLifeDeliveredKWH",tonumber(value))
+						var.Set("GridLifeDeliveredKWH",GetAsNumber(value))
 					-- House total data  
 					elseif key == "1cj" then 
-						var.Set("HouseWatts",tonumber(value))
+						var.Set("HouseWatts",GetAsNumber(value))
 					elseif key == "1co" then 	
-						var.Set("HouseDayKWH",tonumber(value))
+						var.Set("HouseDayKWH",GetAsNumber(value))
 					elseif key == "xxx" then 	
-						var.Set("HouseWeekKWH",tonumber(value))
+						var.Set("HouseWeekKWH",GetAsNumber(value))
 					elseif key == "1cp" then 	
-						var.Set("HouseMonthKWH",tonumber(value))
+						var.Set("HouseMonthKWH",GetAsNumber(value))
 					elseif key == "1cq" then 	
-						var.Set("HouseYearKWH",tonumber(value))
+						var.Set("HouseYearKWH",GetAsNumber(value))
 					elseif key == "1cn" then 	
-						var.Set("HouseLifeKWH",tonumber(value))
+						var.Set("HouseLifeKWH",GetAsNumber(value))
 					end
 				end
 				retData = nil 
@@ -1103,23 +1091,6 @@ function SS_Solarman_Refresh()
 	else
 		return false, HttpCode, "HTTP Get to "..URL.." failed."
 	end  
-
---[[   
-			key = 0
-			repeat 
-				key = key + 1
-			until retData.realTimeDataTemp[key].name == "Battery Temperature" 
-			var.Set("BatteryTemp", tonumber(retData.realTimeDataTemp[key].value)) 
-			log.Debug("Key, Temp value = " .. key ..", ".. retData.realTimeDataTemp[key].value)
-
-			local tslu = os.difftime(os.time(), ts)
-			if tslu > 1800 then  -- no update for 30 min, so use watts to flag as offline. 
-				watts = -666
-			end
-			log.Debug("Time since last update = " .. tslu)
-
-]]	
-
 end
 
 ------------------------------------------------------------------------------------------
@@ -1154,9 +1125,6 @@ function SolarMeter_Init(lul_device)
 	var.Default("YearKWH", 0, PlugIn.EM_SID)
 	var.Default("LifeKWH", 0, PlugIn.EM_SID)
   
-	-- Make sure icons are accessible when they should be. 
-	utils.CheckImages(PluginImages)
-
 	-- Create any child devices
 	SolarMeter_CreateChildren()
 
