@@ -2,8 +2,12 @@
   Module L_SolarMeter1.lua
   Written by R.Boer. 
 
-  V1.12 17 December 2019
+  V1.13 20 December 2019
 
+  V1.13 Changes:
+	- Fixes for fronius as some values may be missing at night time.
+	- Added continius polling for setups with battery and/or grid reports
+	- Added BatteryTemperature for SolarMan device
   V1.12 Changes:
 	- Icon file removed as that comes from github repository
 	- Fix for all converters retuning zero values
@@ -58,7 +62,7 @@ local http = require("socket.http")
 local ltn12 = require("ltn12")
 
 local PlugIn = {
-  Version = "1.12",
+  Version = "1.13",
   DESCRIPTION = "Solar Meter", 
   SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
   EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
@@ -74,6 +78,7 @@ local PlugIn = {
   System = 0,
   DInterval = 30,
   NInterval = 1800,
+  ContinousPoll = false,
   lastWeekDaily = nil,
   thisMonthDaily = nil,
   thisYearMonthy = nil
@@ -537,6 +542,7 @@ function SS_EnphaseLocal_Init()
 	end
 	InitMonthTotal()
 	InitYearTotal()
+	PlugIn.ContinousPoll = false
 	return true
 end
 
@@ -584,6 +590,7 @@ function SS_EnphaseRemote_Init()
 	InitWeekTotal()
 	InitMonthTotal()
 	InitYearTotal()
+	PlugIn.ContinousPoll = false
 	return true
 end
 
@@ -634,6 +641,7 @@ function SS_FroniusAPI_Init()
 	end
 	InitWeekTotal()
 	InitMonthTotal()
+	PlugIn.ContinousPoll = false
 	return true
 end
 
@@ -657,20 +665,29 @@ function SS_FroniusAPI_Refresh()
 		-- Get standard values
 		retData = retData.Body.Data
 		if retData then
-			watts = GetAsNumber(retData.PAC.Value)
-			DayKWH = GetAsNumber(retData.DAY_ENERGY.Value) / 1000
-			YearKWH = GetAsNumber(retData.YEAR_ENERGY.Value) / 1000
-			LifeKWH = GetAsNumber(retData.TOTAL_ENERGY.Value) / 1000
+			if retData.PAC then -- is missing when no energy is produced
+				watts = GetAsNumber(retData.PAC.Value)
+			else
+				watts = 0
+			end	
+			if retData.DAY_ENERGY then DayKWH = GetAsNumber(retData.DAY_ENERGY.Value) / 1000 end
+			if retData.YEAR_ENERGY then YearKWH = GetAsNumber(retData.YEAR_ENERGY.Value) / 1000 end
+			if retData.TOTAL_ENERGY then LifeKWH = GetAsNumber(retData.TOTAL_ENERGY.Value) / 1000 end
 			WeekKWH = GetWeekTotal(DayKWH)
 			MonthKWH = GetMonthTotal(DayKWH)
 			var.Set("Fronius_Status", retData.DeviceStatus.StatusCode)
-			var.Set("Fronius_IAC", retData.IAC.Value)
-			var.Set("Fronius_IDC", retData.IDC.Value)
-			var.Set("Fronius_UAC", retData.UAC.Value)
-			var.Set("Fronius_UDC", retData.UDC.Value)
+			if retData.IAC then var.Set("Fronius_IAC", GetAsNumber(retData.IAC.Value)) end
+			if retData.IAC_L1 then 
+				var.Set("Fronius_IAC", GetAsNumber(retData.IAC_L1.Value)+GetAsNumber(retData.IAC_L2.Value)+GetAsNumber(retData.IAC_L3.Value))
+			end
+			if retData.IDC then var.Set("Fronius_IDC", GetAsNumber(retData.IDC.Value)) end
+			if retData.UAC then var.Set("Fronius_UAC", GetAsNumber(retData.UAC.Value)) end
+			if retData.UAC_L1 then var.Set("Fronius_UAC", GetAsNumber(retData.UAC_L1.Value)) end
+			if retData.UDC then var.Set("Fronius_UDC", GetAsNumber(retData.UDC.Value)) end
 			-- Only update time stamp if watts or DayKWH are changed.
 			if watts == var.GetNumber("Watts", PlugIn.EM_SID) and DayKWH == var.GetNumber("DayKWH", PlugIn.EM_SID) then
 				ts = var.GetNumber("LastRefresh", PlugIn.EM_SID)
+				if ts == 0 then ts = os.time() end
 			end
 
 			-- Addition to read Power Meter values from Fronius  -- Octoplayer July 2019
@@ -689,6 +706,8 @@ function SS_FroniusAPI_Refresh()
 					if retData.Site then
 						local value = retData.Site.P_Grid
 						if type(value) == "number" then
+							var.Set("ToGrid", -retData.Site.P_Grid) -- NOTE: changed signs to match my Solarman display (bigger = better, therefore export TO grid is good, -- Octo)
+							PlugIn.ContinousPoll = true
 							if value == 0 then
 								var.Set("GridWatts",0)
 								var.Set("GridStatus","Static")
@@ -702,38 +721,30 @@ function SS_FroniusAPI_Refresh()
 						end	
 						local value = retData.Site.P_Akku
 						if type(value) == "number" then
+							var.Set("ToBatt", retData.Site.P_Akku)
+							PlugIn.ContinousPoll = true
 							if value == 0 then
 								var.Set("BatteryWatts",0)
 								var.Set("BatteryStatus","Static")
 							elseif value < 0 then
 								var.Set("BatteryWatts",math.abs(value))
-								var.Set("BatteryStatus","Charge")
+								var.Set("BatteryStatus","Discharge")
 							else
 								var.Set("BatteryWatts",value)
-								var.Set("BatteryStatus","Discharge")
-							end
-						end	
-						local value = retData.Site.P_Akku
-						if type(value) == "number" then
-							if value == 0 then
-								var.Set("BatteryWatts",0)
-								var.Set("BatteryStatus","Static")
-							elseif value < 0 then
-								var.Set("BatteryWatts",math.abs(value))
 								var.Set("BatteryStatus","Charge")
-							else
-								var.Set("BatteryWatts",value)
-								var.Set("BatteryStatus","Discharge")
 							end
 						end	
 						local value = retData.Site.P_Load
 						if type(value) == "number" then
+							var.Set("ToHouse", -retData.Site.P_Load) 
 							var.Set("HouseWatts",math.abs(value))
 						else	
 							var.Set("HouseWatts",0)
 						end	
 					end	
-					var.Set("BatterySOC", retData.Invertors[1].SOC)  -- may need different index, 
+					if retData.Inverters and retData.Inverters["1"] and retData.Inverters["1"].SOC then
+						var.Set("BatterySOC", retData.Inverters["1"].SOC)  -- may need different index, 
+					end	
 				end
 			end
 			retData = nil 
@@ -757,6 +768,7 @@ function SS_SolarEdge_Init()
 		return false
 	end
 	InitWeekTotal()
+	PlugIn.ContinousPoll = false
 	return true
 end
 
@@ -810,6 +822,7 @@ function SS_SunGrow_Init()
 	InitWeekTotal()
 	InitMonthTotal()
 	InitYearTotal()
+	PlugIn.ContinousPoll = false
 	return true
 end
 
@@ -865,6 +878,7 @@ function SS_PVOutput_Init()
 	InitWeekTotal()
 	InitMonthTotal()
 	InitYearTotal()
+	PlugIn.ContinousPoll = false
 	return true
 end
 
@@ -931,6 +945,7 @@ function SS_Solarman_Init()
 		return false
 	end
 	InitWeekTotal()
+	PlugIn.ContinousPoll = false
 	return true
 end
 
@@ -1000,8 +1015,10 @@ function SS_Solarman_Refresh()
 						if stat == 0 then
 							var.Set("BatteryStatus","Static")
 						elseif stat == 1 then
+							PlugIn.ContinousPoll = true
 							var.Set("BatteryStatus","Charge")
 						elseif stat == 2 then
+							PlugIn.ContinousPoll = true
 							var.Set("BatteryStatus","Discharge")
 						end
 					elseif key == "1cr" then 	
@@ -1032,14 +1049,18 @@ function SS_Solarman_Refresh()
 						var.Set("BatteryLifeChargedKWH",GetAsNumber(value))
 					elseif key == "1cy" then 	
 						var.Set("BatteryLifeDischargedKWH",GetAsNumber(value))
+					elseif key == "1jp" then 
+						var.Set("BatteryTemperature", GetAsNumber(value))
 					-- Grid data  
 					elseif key == "1fe" then
 						local stat = GetAsNumber(value)
 						if stat == 0 then
 							var.Set("GridStatus","Static")
 						elseif stat == 1 then
+							PlugIn.ContinousPoll = true
 							var.Set("GridStatus","Sell")
 						elseif stat == 2 then
+							PlugIn.ContinousPoll = true
 							var.Set("GridStatus","Buy")
 						end
 					elseif key == "1bq" then 
@@ -1320,14 +1341,14 @@ function SolarMeter_Refresh()
 	local now = os.time() 
 
 	--if (watts == 0) and luup.is_night() then  -- replace with below
-	if (watts == 0) and luup.is_night() and solSystem ~= 7 then  -- Let Solarman query run through night for battery status etc.
+	if (watts == 0) and luup.is_night() and not PlugIn.ContinousPoll then  
 		interval = os.difftime(luup.sunrise() + 10, now)
 		log.Debug("Is Night, restart polling just after sunrise in "..interval.." seconds.")
 		log.Debug("Sun set is at : %s", os.date('%c', luup.sunset()))
 		log.Debug("Sun rise is at : %s", os.date('%c', luup.sunrise()))  
 	else 
 		interval = os.difftime(var.GetNumber("LastRefresh", PlugIn.EM_SID) + interval + 30, now) -- Line added to sync with updates, note that Solarman seems to update at 3-6min intervals. Octoplayer
-		log.Debug("It's Daytime or Solarman: use modified Day delay Interval SolarMeter_Refresh --> ".. interval)
+		log.Debug("It's Daytime or ContinousPoll: use modified Day delay Interval SolarMeter_Refresh --> ".. interval)
 	end
 	if interval <= 30 then -- update was late so dont try again too soon
 		interval = 60
@@ -1337,6 +1358,4 @@ function SolarMeter_Refresh()
 	luup.call_delay("SolarMeter_Refresh", interval) 
 	log.Debug("Last Refresh was : " .. os.date('%c', var.GetNumber("LastRefresh", PlugIn.EM_SID)))
 	log.Debug("Next poll is at : "..os.date('%c', now + interval))
-
-
 end
