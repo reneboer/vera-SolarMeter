@@ -2,11 +2,13 @@
   Module L_SolarMeter1.lua
   Written by R.Boer. 
 
-  V1.13 20 December 2019
+  V1.14 16 January 2020
 
+  V1.14 Changes:
+	- Fixes for handling fractional wattage numbers on Vera. string.format("%d", watts) only handles integer numbers on Vera.
   V1.13 Changes:
 	- Fixes for fronius as some values may be missing at night time.
-	- Added continius polling for setups with battery and/or grid reports
+	- Added continuous polling for setups with battery and/or grid reports
 	- Added BatteryTemperature for SolarMan device
   V1.12 Changes:
 	- Icon file removed as that comes from github repository
@@ -1258,7 +1260,7 @@ function SolarMeter_Refresh()
 				var.Set("LastUpdate", os.date("%H:%M:%S %d", ts))
 				var.Set("HttpCode", "Ok")
 				local dl1 ="%d Watts"
-				var.Set("DisplayLine1", dl1:format(watts), PlugIn.ALTUI_SID)
+				var.Set("DisplayLine1", dl1:format(math.floor(watts+0.5)), PlugIn.ALTUI_SID)
 				local dl2 ="Day: %.3f  Last Upd: %s"
 				var.Set("DisplayLine2", dl2:format(DayKWH, os.date("%H:%M", ts)), PlugIn.ALTUI_SID)
 				-- Update child devices
