@@ -2,10 +2,12 @@
   Module L_SolarMeter1.lua
   Written by R.Boer. 
 
-  V1.14 16 January 2020
+  V1.15 1 February 2020
 
+  V1.15 Changes:
+	- Solarman was not always polled over night for systems with Battery or Grid meters.
   V1.14 Changes:
-	- Fixes for handling fractional wattage numbers on Vera. string.format("%d", watts) only handles integer numbers on Vera.
+	- Fix for handling fractional wattage numbers on Vera. string.format("%d", watts) only handles integer numbers on Vera.
   V1.13 Changes:
 	- Fixes for fronius as some values may be missing at night time.
 	- Added continuous polling for setups with battery and/or grid reports
@@ -64,7 +66,7 @@ local http = require("socket.http")
 local ltn12 = require("ltn12")
 
 local PlugIn = {
-  Version = "1.13",
+  Version = "1.15",
   DESCRIPTION = "Solar Meter", 
   SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
   EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
@@ -1013,14 +1015,13 @@ function SS_Solarman_Refresh()
 						var.Set("InverterStatus", value)
 					-- Battery data
 					elseif key == "1ff" then
+						PlugIn.ContinousPoll = true
 						local stat = GetAsNumber(value)
 						if stat == 0 then
 							var.Set("BatteryStatus","Static")
 						elseif stat == 1 then
-							PlugIn.ContinousPoll = true
 							var.Set("BatteryStatus","Charge")
 						elseif stat == 2 then
-							PlugIn.ContinousPoll = true
 							var.Set("BatteryStatus","Discharge")
 						end
 					elseif key == "1cr" then 	
@@ -1055,14 +1056,13 @@ function SS_Solarman_Refresh()
 						var.Set("BatteryTemperature", GetAsNumber(value))
 					-- Grid data  
 					elseif key == "1fe" then
+						PlugIn.ContinousPoll = true
 						local stat = GetAsNumber(value)
 						if stat == 0 then
 							var.Set("GridStatus","Static")
 						elseif stat == 1 then
-							PlugIn.ContinousPoll = true
 							var.Set("GridStatus","Sell")
 						elseif stat == 2 then
-							PlugIn.ContinousPoll = true
 							var.Set("GridStatus","Buy")
 						end
 					elseif key == "1bq" then 
@@ -1125,10 +1125,10 @@ function SolarMeter_Init(lul_device)
 	var = varAPI()
 	utils = utilsAPI()
 	var.Initialize(PlugIn.SM_SID, PlugIn.THIS_DEVICE)
+	utils.Initialize()
   
 	var.Default("LogLevel", log.LLError)
-	log.Initialize(PlugIn.DESCRIPTION, var.GetNumber("LogLevel"))
-	utils.Initialize()
+	log.Initialize(PlugIn.DESCRIPTION, var.GetNumber("LogLevel"), (utils.GetUI() == utils.IsOpenLuup or utils.GetUI() == utils.IsUI5))
   
 	log.Info("Starting version %s device: %s", PlugIn.Version, tostring(PlugIn.THIS_DEVICE))
 	var.Set("Version", PlugIn.Version)
