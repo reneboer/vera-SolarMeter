@@ -2,8 +2,12 @@
   Module L_SolarMeter1.lua
   Written by R.Boer. 
 
-  V1.15 1 February 2020
+  V1.17 31 August 2020
 
+  V1.17 Changes:
+	- Update to https for solarman. Thanks to octaplayer.
+  V1.16 Changes:
+	- Added https wrapper as protocol default of Vera is incorrect.
   V1.15 Changes:
 	- Solarman was not always polled over night for systems with Battery or Grid meters.
   V1.14 Changes:
@@ -64,9 +68,10 @@ local socketLib = require("socket")  -- Required for logAPI module.
 local json = require("dkjson")
 local http = require("socket.http")
 local ltn12 = require("ltn12")
+local https = require("ssl.https")
 
 local PlugIn = {
-  Version = "1.15",
+  Version = "1.16",
   DESCRIPTION = "Solar Meter", 
   SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
   EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
@@ -100,6 +105,24 @@ end
 local log
 local var
 local utils
+
+-- Need wrapper for Vera to set protocol correctly. Sadly tls1.2 is not supported on the Lite if remote site now requireds that.
+local function HttpsWGet(strURL, timeout)
+	local result = {}
+	local to = timeout or 60
+	http.TIMEOUT = to
+	local bdy,cde,hdrs,stts = https.request{
+			url = strURL, 
+			method = "GET",
+			protocol = "any",
+			options =  {"all", "no_sslv2", "no_sslv3"},
+            verify = "none",
+			sink=ltn12.sink.table(result)
+		}
+	-- Mimick luup.inet.get return values	
+	if bdy == 1 then bdy = 0 else bdy = 1 end
+	return bdy,table.concat(result),cde
+end
 
 
 -- API getting and setting variables and attributes from Vera more efficient.
@@ -248,7 +271,7 @@ local taskHandle = -1
 	-- Write to file for detailed analisys
 	local function _logfile(...)
 		if def_file then
-			local fh = io.open("/tmp/harmony.log","a")
+			local fh = io.open("/tmp/solarmeter.log","a")
 			local msg = os.date("%d/%m/%Y %X") .. ": " .. prot_format(-1,...)
 			fh:write(msg)
 			fh:write("\n")
@@ -606,7 +629,7 @@ function SS_EnphaseRemote_Refresh()
 	local URL = "https://api.enphaseenergy.com/api/v2/systems/%s/summary?key=%s&user_id=%s"
 	URL = URL:format(sys,key,user)
 	log.Debug("Envoy Remote URL " .. URL)
-	local retCode, dataRaw, HttpCode = luup.inet.wget(URL,15)
+	local retCode, dataRaw, HttpCode = HttpsWGet(URL,15)
 	if (retCode == 0 and HttpCode == 200) then
 		log.Debug("Retrieve HTTP Get Complete...")
 		log.Debug(dataRaw)
@@ -625,7 +648,8 @@ function SS_EnphaseRemote_Refresh()
 		var.Set("Enphase_Status", retData.status)
 		var.Set("Enphase_InstallDate", retData.operational_at)
 		var.Set("Enphase_LastReport", retData.last_report_at)
-		ts = retData.last_interval_end_at
+--		ts = retData.last_interval_end_at
+		ts = retData.last_report_at
 		retData = nil 
 		return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
 	else
@@ -784,7 +808,7 @@ function SS_SolarEdge_Refresh()
 	local URL = "https://monitoringapi.solaredge.com/site/%s/overview.json?api_key=%s"
 	URL = URL:format(sys,key)
 	log.Debug("Solar Edge URL " .. URL)
-	local retCode, dataRaw, HttpCode = luup.inet.wget(URL,15)
+	local retCode, dataRaw, HttpCode = HttpsWGet(URL,15)
 	if (retCode == 0 and HttpCode == 200) then
 		log.Debug("Retrieve HTTP Get Complete...")
 		log.Debug(dataRaw)
@@ -895,7 +919,12 @@ function SS_PVOutput_Refresh()
 	local URL = "http%s://pvoutput.org/service/r2/getstatus.jsp?key=%s&sid=%s"
 	URL = URL:format(sec,key,sys)
 	log.Debug("PV Output URL " .. URL)
-	local retCode, dataRaw, HttpCode = luup.inet.wget(URL,15)
+	local retCode, dataRaw, HttpCode
+	if sec == "s" then
+		retCode, dataRaw, HttpCode = HttpsWGet(URL,15)
+	else	
+		retCode, dataRaw, HttpCode = luup.inet.wget(URL,15)
+	end	
 	if (retCode == 0 and HttpCode == 200) then
 		log.Debug("Retrieve HTTP Get Complete...")
 		log.Debug(dataRaw)
@@ -940,7 +969,6 @@ end
 -- On the left of the panel should appear the 'goDetailAjax' set.
 -- right click on this - and select "copy as cURL for Bash"
 -- Paste this into the URL config box on Solar Meter.
-
 function SS_Solarman_Init()
 	local SMD= var.Get("SM_DeviceID")
 	local SMS= var.Get("SM_rememberMe")
@@ -959,18 +987,15 @@ function SS_Solarman_Refresh()
 	local SMD= var.Get("SM_DeviceID")
 	local SMS= var.Get("SM_rememberMe")
 
-	
-	URL = "http://home.solarman.cn/cpro/device/inverter/goDetailAjax.json"
+	URL = "https://home.solarman.cn/cpro/device/inverter/goDetailAjax.json"
 	log.Debug("Solarman URL " .. URL)
 
 	local result = {}
 	local headers = {
-		['origin'] = 'http://home.solarman.cn',
-		['referer'] = 'http://home.solarman.cn/device/inverter/view.html?v=2.1.28&deviceId='..SMD,
+		['origin'] = 'https://home.solarman.cn',
+		['referer'] = 'https://home.solarman.cn/device/inverter/view.html?v=2.2.9.2',
 		['accept'] = 'application/json',
-		['accept-encoding'] = 'identity',
 		['content-type'] = 'application/x-www-form-urlencoded',
-		['connection'] = 'keep-alive',
 		['cookie'] = 'language=2; autoLogin=on; Language=en_US; rememberMe='..SMS
 	}	
 
@@ -1147,14 +1172,14 @@ function SolarMeter_Init(lul_device)
 	var.Default("MonthKWH", 0, PlugIn.EM_SID)
 	var.Default("YearKWH", 0, PlugIn.EM_SID)
 	var.Default("LifeKWH", 0, PlugIn.EM_SID)
-  
+	var.Default("LastRefresh", os.time()-900,  PlugIn.EM_SID)
+	
 	-- Create any child devices
 	SolarMeter_CreateChildren()
 
 	-- See if user disabled plug-in 
-	local isDisabled = luup.attr_get("disabled", PlugIn.THIS_DEVICE)
-	if ((isDisabled == 1) or (isDisabled == "1")) then
-		log.Log("Init: Plug-in version "..PlugIn.Version.." - DISABLED",2)
+	if var.GetAttribute("disabled") == 1 then
+		log.Warning("Init: Plug-in version %s - DISABLED", PlugIn.Version)
 		PlugIn.Disabled = true
 		var.Set("DisplayLine2", "Disabled. ", PlugIn.ALTUI_SID)
 		-- Still create any child devices so we do not loose configurations.
@@ -1180,7 +1205,7 @@ function SolarMeter_Init(lul_device)
 	if my_sys then
 		local ret, res = pcall(my_sys.init)
 		if not ret then
-			log.Error("Init failed "..(res or "unknown"))
+			log.Error("Init failed %s", (res or "unknown"))
 			utils.SetLuupFailure(1, PlugIn.THIS_DEVICE)
 			return false, "Init routing failed.", PlugIn.DESCRIPTION
 		else
@@ -1221,11 +1246,16 @@ function SolarMeter_Init(lul_device)
 	luup.call_delay("SolarMeter_Refresh", 30)
 	log.Debug("SolarMeter has started...")
 	utils.SetLuupFailure(0, PlugIn.THIS_DEVICE)
-	return true, "Start up complete", PlugIn.DESCRIPTION
+	return true, "Ok", PlugIn.DESCRIPTION
 end
 
 -- Get values from solar system
 function SolarMeter_Refresh()
+	if var.GetAttribute("disabled") == 1 then
+		log.Warning("Init: Plug-in version %s - DISABLED",PlugIn.Version)
+		PlugIn.Disabled = true
+		return 
+	end	
 	-- app's own memory usage in kB
 	local AppMemoryUsed =  math.floor(collectgarbage "count")
 	var.Set("AppMemoryUsed", AppMemoryUsed) 
@@ -1240,12 +1270,12 @@ function SolarMeter_Refresh()
 		local ret, res, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = pcall(my_sys.refresh)
 		if ret == true then 
 			if res == true then
-				log.Debug("Current Power --> "..watts.." W")
-				log.Debug("KWH Today     --> "..DayKWH.." kWh")
-				log.Debug("KWH Week      --> "..WeekKWH.." kWh")
-				log.Debug("KWH Month     --> "..MonthKWH.." kWh")
-				log.Debug("KWH Year      --> "..YearKWH.." kWh")
-				log.Debug("KWH Lifetime  --> "..LifeKWH.." kWh")
+				log.Debug("Current Power --> %s Watts", watts)
+				log.Debug("KWH Today     --> %s kWh", DayKWH)
+				log.Debug("KWH Week      --> %s kWh", WeekKWH)
+				log.Debug("KWH Month     --> %s kWh", MonthKWH)
+				log.Debug("KWH Year      --> %s kWh", YearKWH)
+				log.Debug("KWH Lifetime  --> %s kWh", LifeKWH)
 				-- Set values in PowerMeter
 				if watts ~= -1 then var.Set("Watts", watts, PlugIn.EM_SID) end
 				if DayKWH ~= -1 then 
@@ -1326,12 +1356,12 @@ function SolarMeter_Refresh()
 					var.Set("LifeKWH", var.Get("BatteryLifeDischargedKWH"), PlugIn.EM_SID, PlugIn.BatteryOutDevice)
 				end
 			else
-				log.Log("Refresh failed "..(watts or "unknown"),2)
+				log.Error("Refresh failed %s", (watts or "unknown"))
 				var.Set("HttpCode", ts)
 				log.Debug(watts)
 			end
 		else
-			log.Log("Refresh pcall error " ..(res or "unknown"),2)
+			log.Error("Refresh pcall error %s", (res or "unknown"))
 			var.Set("HttpCode", 0)
 		end
 	end
@@ -1345,19 +1375,19 @@ function SolarMeter_Refresh()
 	--if (watts == 0) and luup.is_night() then  -- replace with below
 	if (watts == 0) and luup.is_night() and not PlugIn.ContinousPoll then  
 		interval = os.difftime(luup.sunrise() + 10, now)
-		log.Debug("Is Night, restart polling just after sunrise in "..interval.." seconds.")
+		log.Debug("Is Night, restart polling just after sunrise in %d seconds.", interval)
 		log.Debug("Sun set is at : %s", os.date('%c', luup.sunset()))
 		log.Debug("Sun rise is at : %s", os.date('%c', luup.sunrise()))  
 	else 
-		interval = os.difftime(var.GetNumber("LastRefresh", PlugIn.EM_SID) + interval + 30, now) -- Line added to sync with updates, note that Solarman seems to update at 3-6min intervals. Octoplayer
-		log.Debug("It's Daytime or ContinousPoll: use modified Day delay Interval SolarMeter_Refresh --> ".. interval)
+		interval = os.difftime(var.GetNumber("LastRefresh", PlugIn.EM_SID) + interval + 30, now) -- Line added to sync with system updates
+		log.Debug("It's Daytime or ContinousPoll: use modified Day delay Interval SolarMeter_Refresh --> %d.", interval)
 	end
-	if interval <= 30 then -- update was late so dont try again too soon
-		interval = 60
-		log.Debug("Update was late, try again in " .. interval)
+	if interval < 10 then -- update was late so dont try again too soon
+		interval = var.GetNumber("DayInterval")
+		log.Debug("Update was late, try again in %d seconds.", interval)
 	end
-	log.Debug("Interval to SolarMeter_Refresh --> "..interval)
+	log.Debug("Interval to SolarMeter_Refresh --> %d seconds.", interval)
 	luup.call_delay("SolarMeter_Refresh", interval) 
-	log.Debug("Last Refresh was : " .. os.date('%c', var.GetNumber("LastRefresh", PlugIn.EM_SID)))
-	log.Debug("Next poll is at : "..os.date('%c', now + interval))
+	log.Debug("Last Refresh was : %s", os.date('%c', var.GetNumber("LastRefresh", PlugIn.EM_SID)))
+	log.Debug("Next poll is at : %s", os.date('%c', now + interval))
 end
