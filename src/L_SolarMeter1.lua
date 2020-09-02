@@ -2,8 +2,10 @@
   Module L_SolarMeter1.lua
   Written by R.Boer. 
 
-  V1.17 31 August 2020
+  V1.18 31 August 2020
 
+  V1.18 Changes:
+	- Fix for https for solarman. Thanks to octaplayer.
   V1.17 Changes:
 	- Update to https for solarman. Thanks to octaplayer.
   V1.16 Changes:
@@ -71,7 +73,7 @@ local ltn12 = require("ltn12")
 local https = require("ssl.https")
 
 local PlugIn = {
-  Version = "1.16",
+  Version = "1.18",
   DESCRIPTION = "Solar Meter", 
   SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
   EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
@@ -991,10 +993,21 @@ function SS_Solarman_Refresh()
 	log.Debug("Solarman URL " .. URL)
 
 	local result = {}
+--[[
 	local headers = {
 		['origin'] = 'https://home.solarman.cn',
 		['referer'] = 'https://home.solarman.cn/device/inverter/view.html?v=2.2.9.2',
 		['accept'] = 'application/json',
+		['content-type'] = 'application/x-www-form-urlencoded',
+		['cookie'] = 'language=2; autoLogin=on; Language=en_US; rememberMe='..SMS
+	}
+]]
+	local headers = {
+		['origin'] = 'https://home.solarman.cn',
+		['referer'] = 'https://home.solarman.cn/device/inverter/view.html?v=2.2.9.2&deviceId='..SMD,
+		['accept'] = 'application/json',
+		['accept-encoding'] = 'identity',
+		['connection'] =  'keep-alive',
 		['content-type'] = 'application/x-www-form-urlencoded',
 		['cookie'] = 'language=2; autoLogin=on; Language=en_US; rememberMe='..SMS
 	}	
@@ -1002,7 +1015,7 @@ function SS_Solarman_Refresh()
 	local request_body = "deviceId=" .. SMD
 	headers["content-length"] = string.len(request_body)
 
-	local retCode,HttpCode = http.request{
+	local retCode,HttpCode = https.request{
 		url=URL, 
 		method='POST',
 		sink=ltn12.sink.table(result),
