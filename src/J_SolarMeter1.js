@@ -1,23 +1,20 @@
 //# sourceURL=J_SolarMeter.js
-// SmartMeter control UI for UI7 and ALTUI
+// SolarMeter control UI for UI7 and ALTUI
 // Written by R.Boer. 
-// V1.11 6 December 2019
+// V1.20 31 December 2020
 //
+// V1.20 Changes:
+//		Fronius device 0 for Site lvele reporting
 // V1.11 Changes:
 //		Child device support for Fronius
-//
 // V1.9 Changes:
 //		SolarMan support
-//
 // V1.5.4 Changes:
 //		Fix for saving settings on ALTUI
-//
 // V1.5 Changes:
 //		Only one poll interval as polling at night is suspended automatically.
-//
 // V1.1 Changes:
 //		Fronius JSON API V1 support
-//
 // V1.0 Changes:
 //		Initial release
 
@@ -58,7 +55,7 @@ var SolarMeter = (function (api) {
 			var solarSystem = [{'value':'0','label':'Please select...'},{'value':'1','label':'Enphase Envoy API'},{'value':'2','label':'Enphase Remote API'},{'value':'6','label':'Fronius API V1'},{'value':'4','label':'PV Output'},{'value':'3','label':'Solar Edge'},{'value':'7','label':'Solarman'},{'value':'5','label':'SUNGROW Power'}];
 			var yesNo = [{'value':'0','label':'No'},{'value':'1','label':'Yes'}];
 			var logLevel = [{'value':'1','label':'Error'},{'value':'2','label':'Warning'},{'value':'8','label':'Info'},{'value':'11','label':'Debug'}];
-			var fronDev = [{'value':'0','label':'0'},{'value':'1','label':'1'},{'value':'2','label':'2'},{'value':'3','label':'3'},{'value':'4','label':'4'},{'value':'5','label':'5'},{'value':'6','label':'6'},{'value':'7','label':'7'},{'value':'8','label':'8'},{'value':'9','label':'9'}];
+			var fronDev = [{'value':'0','label':'0 = Site'},{'value':'1','label':'1'},{'value':'2','label':'2'},{'value':'3','label':'3'},{'value':'4','label':'4'},{'value':'5','label':'5'},{'value':'6','label':'6'},{'value':'7','label':'7'},{'value':'8','label':'8'},{'value':'9','label':'9'}];
 			var html = '<div class="deviceCpanelSettingsPage">'+
 				'<h3>Device #'+deviceID+'&nbsp;&nbsp;&nbsp;'+api.getDisplayedDeviceName(deviceID)+'</h3>';
 			if (deviceObj.disabled == 1) {

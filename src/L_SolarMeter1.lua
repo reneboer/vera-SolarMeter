@@ -2,8 +2,13 @@
   Module L_SolarMeter1.lua
   Written by R.Boer. 
 
-  V1.18 31 August 2020
+  V1.20 6 January 2021
 
+  V1.20 Changes:
+	- For Fronius, Device ID 0 will display Site data rather then Inverter level.
+	- Limit number of decimals for KWh values.
+  V1.19 Changes:
+	- Enhanced polling for Enphase Remote API.
   V1.18 Changes:
 	- Fix for https for solarman. Thanks to octaplayer.
   V1.17 Changes:
@@ -73,7 +78,7 @@ local ltn12 = require("ltn12")
 local https = require("ssl.https")
 
 local PlugIn = {
-  Version = "1.18",
+  Version = "1.20",
   DESCRIPTION = "Solar Meter", 
   SM_SID = "urn:rboer-com:serviceId:SolarMeter1", 
   EM_SID = "urn:micasaverde-com:serviceId:EnergyMetering1", 
@@ -516,6 +521,7 @@ local function addMeterDevice(childDevices, meterType)
 		 sid .. ",DayKWH=0\n" ..
 		 sid .. ",WeekKWH=0\n" ..
 		 sid .. ",MonthKWH=0\n" ..
+		 sid .. ",YearKWH=0\n" ..
 		 sid .. ",LifeKWH=0\n"
 	-- For whole house set WholeHouse flag
 	if (meterType == "House") then
@@ -628,35 +634,80 @@ function SS_EnphaseRemote_Refresh()
 	local key = var.Get("EN_APIKey")
 	local user = var.Get("EN_UserID")
 	local sys = var.Get("EN_SystemID")
-	local URL = "https://api.enphaseenergy.com/api/v2/systems/%s/summary?key=%s&user_id=%s"
-	URL = URL:format(sys,key,user)
-	log.Debug("Envoy Remote URL " .. URL)
+	-- First ask for Wattage
+	local URL = "https://api.enphaseenergy.com/api/v2/systems/%s/stats?start_at=%d&key=%s&user_id=%s"
+	local lastReport_ts = var.GetNumber("Enphase_LastReport")
+	local now = os.time()
+	local interval = var.GetNumber("DayInterval")
+	local ts
+	if now-lastReport_ts > (interval * 5) then 
+		ts = now - (interval * 5)
+	else
+		ts = lastReport_ts - interval
+	end
+	URL = URL:format(sys,ts,key,user)
+	log.Debug("Envoy Remote URL 1 " .. URL)
 	local retCode, dataRaw, HttpCode = HttpsWGet(URL,15)
 	if (retCode == 0 and HttpCode == 200) then
 		log.Debug("Retrieve HTTP Get Complete...")
 		log.Debug(dataRaw)
 		local retData = json.decode(dataRaw)
-		-- Get standard values
-		watts = GetAsNumber(retData.current_power)
-		DayKWH = GetAsNumber(retData.energy_today)/1000
-		LifeKWH = GetAsNumber(retData.energy_lifetime)/1000
-		WeekKWH = GetWeekTotal(DayKWH)
-		MonthKWH = GetMonthTotal(DayKWH)
-		YearKWH = GetYearTotal(MonthKWH)
+		if retData.meta then
+			ts = retData.meta.last_report_at
+			-- Find last two reported power values.
+			local last_int = 0
+			local pwatts = -1
+			for k,v in pairs(retData.intervals) do
+				if v.end_at > last_int then
+					pwatts = watts
+					watts = v.powr
+					last_int = v.end_at
+				end
+			end
+			-- Last reading is often very low, use one just before in that case.
+			if watts < (pwatts / 2) then watts = pwatts end
+			
+			-- If we have a new report, then also ask for KWH values
+			if ts ~= lastReport_ts then
+				-- Ask for KWH values
+				local URL = "https://api.enphaseenergy.com/api/v2/systems/%s/summary?key=%s&user_id=%s"
+				URL = URL:format(sys,key,user)
+				log.Debug("Envoy Remote URL 2 " .. URL)
+				local retCode, dataRaw, HttpCode = HttpsWGet(URL,15)
+				if (retCode == 0 and HttpCode == 200) then
+					log.Debug("Retrieve HTTP Get Complete...")
+					log.Debug(dataRaw)
+					local retData = json.decode(dataRaw)
+					-- Get standard values
+					DayKWH = GetAsNumber(retData.energy_today)/1000
+					LifeKWH = GetAsNumber(retData.energy_lifetime)/1000
+					WeekKWH = GetWeekTotal(DayKWH)
+					MonthKWH = GetMonthTotal(DayKWH)
+					YearKWH = GetYearTotal(MonthKWH)
 
-		-- Get additional data
-		var.Set("Enphase_ModuleCount", retData.modules)
-		var.Set("Enphase_MaxPower", retData.size_w)
-		var.Set("Enphase_Status", retData.status)
-		var.Set("Enphase_InstallDate", retData.operational_at)
-		var.Set("Enphase_LastReport", retData.last_report_at)
---		ts = retData.last_interval_end_at
-		ts = retData.last_report_at
-		retData = nil 
-		return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
+					-- Get additional data
+					var.Set("Enphase_ModuleCount", retData.modules)
+					var.Set("Enphase_MaxPower", retData.size_w)
+					var.Set("Enphase_Status", retData.status)
+					var.Set("Enphase_InstallDate", retData.operational_at)
+					var.Set("Enphase_LastEnergy", retData.last_energy_at)
+					var.Set("Enphase_LastReport", retData.last_report_at)
+					retData = nil
+					
+					-- Calculate optimized next poll time.
+					
+					
+					return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH, next_poll_ts
+				else
+					return false, HttpCode, "HTTP Get to "..URL.." failed."
+				end  
+			end
+		else
+			return false, 400, "Unexpected body contents." 
+		end
 	else
 		return false, HttpCode, "HTTP Get to "..URL.." failed."
-	end  
+	end
 end
 
 -- For Fronius Solar API V1
@@ -680,112 +731,142 @@ function SS_FroniusAPI_Refresh()
 	local ipa = var.Get("FA_IPAddress")
 	local dev = var.Get("FA_DeviceID")
 
-	local URL = "http://%s/solar_api/v1/GetInverterRealtimeData.cgi?Scope=Device&DeviceId=%s&DataCollection=CommonInverterData"
-	URL = URL:format(ipa,dev)
-	log.Debug("Fronius URL " .. URL)
 	ts = os.time()
-	local retCode, dataRaw, HttpCode = luup.inet.wget(URL,15)
-	if (retCode == 0 and HttpCode == 200) then
-		log.Debug("Retrieve HTTP Get Complete...")
-		log.Debug(dataRaw)
+	if tonumber(dev) ~= 0 then
+		local URL = "http://%s/solar_api/v1/GetInverterRealtimeData.cgi?Scope=Device&DeviceId=%s&DataCollection=CommonInverterData"
+		URL = URL:format(ipa,dev)
+		log.Debug("Fronius Inverter URL " .. URL)
+		local retCode, dataRaw, HttpCode = luup.inet.wget(URL,15)
+		if (retCode == 0 and HttpCode == 200) then
+			log.Debug("Retrieve Inverter Data Complete...")
+			log.Debug(dataRaw)
 
-		-- Get standard values
-		local retData = json.decode(dataRaw)
-    
-		-- Get standard values
-		retData = retData.Body.Data
-		if retData then
-			if retData.PAC then -- is missing when no energy is produced
-				watts = GetAsNumber(retData.PAC.Value)
-			else
-				watts = 0
-			end	
-			if retData.DAY_ENERGY then DayKWH = GetAsNumber(retData.DAY_ENERGY.Value) / 1000 end
-			if retData.YEAR_ENERGY then YearKWH = GetAsNumber(retData.YEAR_ENERGY.Value) / 1000 end
-			if retData.TOTAL_ENERGY then LifeKWH = GetAsNumber(retData.TOTAL_ENERGY.Value) / 1000 end
-			WeekKWH = GetWeekTotal(DayKWH)
-			MonthKWH = GetMonthTotal(DayKWH)
-			var.Set("Fronius_Status", retData.DeviceStatus.StatusCode)
-			if retData.IAC then var.Set("Fronius_IAC", GetAsNumber(retData.IAC.Value)) end
-			if retData.IAC_L1 then 
-				var.Set("Fronius_IAC", GetAsNumber(retData.IAC_L1.Value)+GetAsNumber(retData.IAC_L2.Value)+GetAsNumber(retData.IAC_L3.Value))
-			end
-			if retData.IDC then var.Set("Fronius_IDC", GetAsNumber(retData.IDC.Value)) end
-			if retData.UAC then var.Set("Fronius_UAC", GetAsNumber(retData.UAC.Value)) end
-			if retData.UAC_L1 then var.Set("Fronius_UAC", GetAsNumber(retData.UAC_L1.Value)) end
-			if retData.UDC then var.Set("Fronius_UDC", GetAsNumber(retData.UDC.Value)) end
-			-- Only update time stamp if watts or DayKWH are changed.
-			if watts == var.GetNumber("Watts", PlugIn.EM_SID) and DayKWH == var.GetNumber("DayKWH", PlugIn.EM_SID) then
-				ts = var.GetNumber("LastRefresh", PlugIn.EM_SID)
-				if ts == 0 then ts = os.time() end
-			end
-
-			-- Addition to read Power Meter values from Fronius  -- Octoplayer July 2019
-			URL = "http://%s//solar_api/v1/GetPowerFlowRealtimeData.fcgi"
-			URL = URL:format(ipa)
-			log.Debug("Fronius Power URL " .. URL)
-			retCode, dataRaw, HttpCode = luup.inet.wget(URL,15)
-			if (retCode == 0 and HttpCode == 200) then
-				log.Debug("Retrieve HTTP Get Power Complete...")
-				log.Debug(dataRaw)
-
-				-- Get Power values
-				local retData = json.decode(dataRaw)
+			-- Get standard values
+			local retData = json.decode(dataRaw)
+			-- check for propper response
+			if retData.Head.Status and retData.Head.Status.Code == 0 then
+				-- Get standard values
 				retData = retData.Body.Data
 				if retData then
-					if retData.Site then
-						local value = retData.Site.P_Grid
-						if type(value) == "number" then
-							var.Set("ToGrid", -retData.Site.P_Grid) -- NOTE: changed signs to match my Solarman display (bigger = better, therefore export TO grid is good, -- Octo)
-							PlugIn.ContinousPoll = true
-							if value == 0 then
-								var.Set("GridWatts",0)
-								var.Set("GridStatus","Static")
-							elseif value < 0 then
-								var.Set("GridWatts",math.abs(value))
-								var.Set("GridStatus","Sell")
-							else
-								var.Set("GridWatts",value)
-								var.Set("GridStatus","Buy")
-							end
-						end	
-						local value = retData.Site.P_Akku
-						if type(value) == "number" then
-							var.Set("ToBatt", retData.Site.P_Akku)
-							PlugIn.ContinousPoll = true
-							if value == 0 then
-								var.Set("BatteryWatts",0)
-								var.Set("BatteryStatus","Static")
-							elseif value < 0 then
-								var.Set("BatteryWatts",math.abs(value))
-								var.Set("BatteryStatus","Discharge")
-							else
-								var.Set("BatteryWatts",value)
-								var.Set("BatteryStatus","Charge")
-							end
-						end	
-						local value = retData.Site.P_Load
-						if type(value) == "number" then
-							var.Set("ToHouse", -retData.Site.P_Load) 
-							var.Set("HouseWatts",math.abs(value))
-						else	
-							var.Set("HouseWatts",0)
-						end	
+					if retData.PAC then -- is missing when no energy is produced
+						watts = GetAsNumber(retData.PAC.Value)
+					else
+						watts = 0
 					end	
-					if retData.Inverters and retData.Inverters["1"] and retData.Inverters["1"].SOC then
-						var.Set("BatterySOC", retData.Inverters["1"].SOC)  -- may need different index, 
-					end	
-				end
+					if retData.DAY_ENERGY then DayKWH = GetAsNumber(retData.DAY_ENERGY.Value) / 1000 end
+					if retData.YEAR_ENERGY then YearKWH = GetAsNumber(retData.YEAR_ENERGY.Value) / 1000 end
+					if retData.TOTAL_ENERGY then LifeKWH = GetAsNumber(retData.TOTAL_ENERGY.Value) / 1000 end
+					WeekKWH = GetWeekTotal(DayKWH)
+					MonthKWH = GetMonthTotal(DayKWH)
+					if retData.IAC then var.Set("Fronius_IAC", GetAsNumber(retData.IAC.Value)) end
+					if retData.IAC_L1 then 
+						var.Set("Fronius_IAC", GetAsNumber(retData.IAC_L1.Value)+GetAsNumber(retData.IAC_L2.Value)+GetAsNumber(retData.IAC_L3.Value))
+					end
+					if retData.IDC then var.Set("Fronius_IDC", GetAsNumber(retData.IDC.Value)) end
+					if retData.UAC then var.Set("Fronius_UAC", GetAsNumber(retData.UAC.Value)) end
+					if retData.UAC_L1 then var.Set("Fronius_UAC", GetAsNumber(retData.UAC_L1.Value)) end
+					if retData.UDC then var.Set("Fronius_UDC", GetAsNumber(retData.UDC.Value)) end
+					if retData.DeviceStatus then var.Set("Fronius_Status", retData.DeviceStatus.StatusCode) end
+				else
+					return false, HttpCode, "No data received."
+				end	
+			else
+				return false, (retData.Head.Status.Code or -1), "No data received. Reason:" .. (retData.Head.Status.Reason or "unknown")
 			end
-			retData = nil 
-			return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
 		else
-			return false, HttpCode, "No data received."
-		end
+			return false, HttpCode, "HTTP Get to "..URL.." failed."
+		end 
+	else	
+		log.Debug("Not retrieving Inverter level details.")
+	end	
+	-- Addition to read Power Meter values from Fronius or Site values
+	local URL = "http://%s//solar_api/v1/GetPowerFlowRealtimeData.fcgi"
+	URL = URL:format(ipa)
+	log.Debug("Fronius Site Power URL " .. URL)
+	local retCode, dataRaw, HttpCode = luup.inet.wget(URL,15)
+	if (retCode == 0 and HttpCode == 200) then
+		log.Debug("Retrieve Site Power Data Complete...")
+		log.Debug(dataRaw)
+
+		-- Get Power values
+		local retData = json.decode(dataRaw)
+		if retData.Head.Status and retData.Head.Status.Code == 0 then
+			var.Set("Fronius_Status", retData.Head.Status.Code or -1)
+			retData = retData.Body.Data
+			if retData then
+				if retData.Site then
+					local siteData = retData.Site
+					-- Use Site rather than inverter data.
+					if tonumber(dev) == 0 then
+						if siteData.P_PV then -- is missing when no energy is produced
+							watts = GetAsNumber(siteData.P_PV)
+						else
+							watts = 0
+						end	
+						if siteData.E_Day then DayKWH = GetAsNumber(siteData.E_Day) / 1000 end
+						if siteData.E_Year then YearKWH = GetAsNumber(siteData.E_Year) / 1000 end
+						if siteData.E_Total then LifeKWH = GetAsNumber(siteData.E_Total) / 1000 end
+						WeekKWH = GetWeekTotal(DayKWH)
+						MonthKWH = GetMonthTotal(DayKWH)
+					end
+					local value = siteData.P_Grid
+					if type(value) == "number" then
+						var.Set("ToGrid", -siteData.P_Grid)
+						PlugIn.ContinousPoll = true
+						if value == 0 then
+							var.Set("GridWatts",0)
+							var.Set("GridStatus","Static")
+						elseif value < 0 then
+							var.Set("GridWatts",math.abs(value))
+							var.Set("GridStatus","Sell")
+						else
+							var.Set("GridWatts",value)
+							var.Set("GridStatus","Buy")
+						end
+					end	
+					local value = siteData.P_Akku
+					if type(value) == "number" then
+						var.Set("ToBatt", siteData.P_Akku)
+						PlugIn.ContinousPoll = true
+						if value == 0 then
+							var.Set("BatteryWatts",0)
+							var.Set("BatteryStatus","Static")
+						elseif value < 0 then
+							var.Set("BatteryWatts",math.abs(value))
+							var.Set("BatteryStatus","Discharge")
+						else
+							var.Set("BatteryWatts",value)
+							var.Set("BatteryStatus","Charge")
+						end
+					end	
+					local value = siteData.P_Load
+					if type(value) == "number" then
+						var.Set("ToHouse", -siteData.P_Load) 
+						var.Set("HouseWatts",math.abs(value))
+					else	
+						var.Set("HouseWatts",0)
+					end	
+				end	
+				if retData.Inverters and retData.Inverters[dev] and retData.Inverters[dev].SOC then
+					var.Set("BatterySOC", retData.Inverters[dev].SOC)  -- may need different index, 
+				end	
+			else
+				return false, HttpCode, "No data received."
+			end	
+		else
+			return false, (retData.Head.Status.Code or -1), "No data received. Reason:" .. (retData.Head.Status.Reason or "unknown")
+		end	
 	else
 		return false, HttpCode, "HTTP Get to "..URL.." failed."
 	end 
 
+	-- Only update time stamp if watts or DayKWH are changed.
+	if watts == var.GetNumber("Watts", PlugIn.EM_SID) and DayKWH == var.GetNumber("DayKWH", PlugIn.EM_SID) then
+		ts = var.GetNumber("LastRefresh", PlugIn.EM_SID)
+		if ts == 0 then ts = os.time() end
+	end
+	retData = nil 
+	return true, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH
  end
 
 -- Solar Edge. thanks to cmille34. http://forum.micasaverde.com/index.php/topic,39157.msg355189.html#msg355189
@@ -810,7 +891,8 @@ function SS_SolarEdge_Refresh()
 	local URL = "https://monitoringapi.solaredge.com/site/%s/overview.json?api_key=%s"
 	URL = URL:format(sys,key)
 	log.Debug("Solar Edge URL " .. URL)
-	local retCode, dataRaw, HttpCode = HttpsWGet(URL,15)
+--	local retCode, dataRaw, HttpCode = HttpsWGet(URL,15)
+	local retCode, dataRaw, HttpCode = luup.inet.wget(URL,15)
 	if (retCode == 0 and HttpCode == 200) then
 		log.Debug("Retrieve HTTP Get Complete...")
 		log.Debug(dataRaw)
@@ -834,7 +916,7 @@ function SS_SolarEdge_Refresh()
 			return false, HttpCode, "No data received."
 		end
 	else
-		return false, HttpCode, "HTTP Get to "..URL.." failed."
+		return false, HttpCode, "HTTP Get failed: RC "..tostring(retCode or -1)..", HTTP Code "..tostring(HttpCode or -1)
 	end  
 end
 
@@ -993,15 +1075,6 @@ function SS_Solarman_Refresh()
 	log.Debug("Solarman URL " .. URL)
 
 	local result = {}
---[[
-	local headers = {
-		['origin'] = 'https://home.solarman.cn',
-		['referer'] = 'https://home.solarman.cn/device/inverter/view.html?v=2.2.9.2',
-		['accept'] = 'application/json',
-		['content-type'] = 'application/x-www-form-urlencoded',
-		['cookie'] = 'language=2; autoLogin=on; Language=en_US; rememberMe='..SMS
-	}
-]]
 	local headers = {
 		['origin'] = 'https://home.solarman.cn',
 		['referer'] = 'https://home.solarman.cn/device/inverter/view.html?v=2.2.9.2&deviceId='..SMD,
@@ -1283,6 +1356,12 @@ function SolarMeter_Refresh()
 		local ret, res, ts, watts, DayKWH, WeekKWH, MonthKWH, YearKWH, LifeKWH = pcall(my_sys.refresh)
 		if ret == true then 
 			if res == true then
+				-- Set KWh values to 0 or 2 decimals
+				if DayKWH ~= -1 then DayKWH = math.floor(DayKWH * 100) / 100 end
+				if WeekKWH ~= -1 then WeekKWH = math.floor(WeekKWH * 100) / 100 end
+				if MonthKWH ~= -1 then MonthKWH = math.floor(MonthKWH * 100) / 100 end
+				if YearKWH ~= -1 then YearKWH = math.floor(YearKWH) end
+				if LifeKWH ~= -1 then LifeKWH = math.floor(LifeKWH) end
 				log.Debug("Current Power --> %s Watts", watts)
 				log.Debug("KWH Today     --> %s kWh", DayKWH)
 				log.Debug("KWH Week      --> %s kWh", WeekKWH)
