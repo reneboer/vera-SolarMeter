@@ -22,7 +22,7 @@ Parameters needed are:
   
 - Fronius JSON API V1 API<br>
   The Fronius local IP address.
-  The device ID between 0 and 9.  to check you can enter the URL http://[Fronius Local IP address]/solar_api/v1/GetInverterRealtimeData.cgi?Scope=System and see what is listed behind Values. If you see multiple you should have multiple converters and you need to install a copy of the plugin for each.
+  The device ID between 1 and 9.  To check you can enter the URL http://[Fronius Local IP address]/solar_api/v1/GetInverterRealtimeData.cgi?Scope=System and see what is listed behind Values. If you see multiple you should have multiple converters and you need to install a copy of the plugin for each. If you have multiple inverters on a site and you want to report at site level, select device ID 0.
 
 - Solar Edge Cloud API<br>
   API Key and System ID.
