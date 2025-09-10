@@ -1,3 +1,6 @@
+# No longer maintained.
+I no longer use vera or openLuup and no longer maintaining this repository.
+
 # vera-SolarMeter
 Plugin to read solar production data supporting several Solar systems.
 
